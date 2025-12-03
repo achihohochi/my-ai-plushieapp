@@ -96,6 +96,7 @@ export function Footer() {
           <p className="text-sm text-muted-foreground">
             © 2025 Cuddle Corner. Made with 💖 for plushie lovers everywhere!
           </p>
+          <p className="text-sm text-muted-foreground mt-2">created by rleung</p>
         </div>
       </div>
     </footer>
