@@ -1,11 +1,31 @@
 "use client"
 
-import { ShoppingBag, Heart, Search } from "lucide-react"
+import { useEffect, useState } from "react"
+import { ShoppingBag, Heart, Search, Moon, Sun } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useCart } from "@/components/cart-context"
 
 export function Header() {
   const { setIsOpen, totalItems } = useCart()
+  const [isDark, setIsDark] = useState(false)
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+
+    const storedTheme = localStorage.getItem("theme")
+    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches
+    const nextDark = storedTheme ? storedTheme === "dark" : prefersDark
+
+    setIsDark(nextDark)
+    document.documentElement.classList.toggle("dark", nextDark)
+  }, [])
+
+  const toggleTheme = () => {
+    const nextDark = !isDark
+    setIsDark(nextDark)
+    document.documentElement.classList.toggle("dark", nextDark)
+    localStorage.setItem("theme", nextDark ? "dark" : "light")
+  }
 
   return (
     <header className="sticky top-0 z-40 bg-card/80 backdrop-blur-md border-b border-border">
@@ -32,6 +52,15 @@ export function Header() {
           </nav>
 
           <div className="flex items-center gap-3">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="rounded-full"
+              onClick={toggleTheme}
+              aria-label="Toggle dark mode"
+            >
+              {isDark ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+            </Button>
             <Button variant="ghost" size="icon" className="rounded-full">
               <Search className="h-5 w-5" />
             </Button>
