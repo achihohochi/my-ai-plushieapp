@@ -153,17 +153,32 @@ The color scheme is defined in `app/globals.css` using CSS custom properties. Mo
 
 The easiest way to deploy is using Vercel:
 
-1. Push your code to GitHub
+#### Method 1: Deploy via Vercel Dashboard
+
+1. Push your code to GitHub (or GitLab/Bitbucket)
 2. Import your repository on [Vercel](https://vercel.com)
 3. Vercel will automatically detect Next.js and configure the build settings
 4. Click "Deploy" and your app will be live!
 
-Or use the Vercel CLI:
+**Automatic deployments:** Every push to main/master triggers a production deployment. Pull requests get preview deployments.
 
+
+#### Method 2: Deploy via Vercel CLI
+
+** ENSURE you're in the root dir of the project folder, before running the below commands **
 ```bash
 npm i -g vercel
-vercel
+vercel login
+vercel --prod
 ```
+
+For first-time setup, Vercel will prompt you for project configuration. Subsequent deployments: use `vercel --prod` for production or `vercel` for previews.
+
+#### Post-Deployment
+
+- **Custom Domain:** Add in Project Settings → Domains
+- **Analytics:** Already included and tracking automatically
+- **Rollback:** Available from the Deployments tab in dashboard
 
 ### Other Deployment Options
 
