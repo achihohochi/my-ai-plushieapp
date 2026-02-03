@@ -1,0 +1,178 @@
+// Prisma Schema for AI Plushie E-commerce App
+// See: docs/architecture/TRD.md for full database specification
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================
+// USER MANAGEMENT
+// ============================================
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  password_hash String?   // Nullable for OAuth users
+  name          String?
+  created_at    DateTime  @default(now())
+  updated_at    DateTime  @updatedAt
+
+  // Relations
+  orders        Order[]
+  addresses     Address[]
+  cart_items    CartItem[]
+
+  @@map("users")
+}
+
+// ============================================
+// PRODUCT CATALOG
+// ============================================
+
+model Product {
+  id              Int       @id @default(autoincrement())
+  name            String
+  description     String?   @db.Text
+  price           Decimal   @db.Decimal(10, 2)
+  image_url       String    // Path to image in /public folder
+  stock_quantity  Int       @default(0)
+  status          String    @default("active") // active, inactive, sold_out
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
+
+  // Relations
+  order_items     OrderItem[]
+  cart_items      CartItem[]
+  inventory_logs  InventoryLog[]
+
+  @@map("products")
+}
+
+// ============================================
+// SHOPPING CART
+// ============================================
+
+model CartItem {
+  id         Int      @id @default(autoincrement())
+  user_id    String?  // Nullable for guest users
+  session_id String?  // For guest checkout
+  product_id Int
+  quantity   Int      @default(1)
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  // Relations
+  user       User?    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  product    Product  @relation(fields: [product_id], references: [id])
+
+  @@map("cart_items")
+}
+
+// ============================================
+// ORDERS & CHECKOUT
+// ============================================
+
+model Order {
+  id                  Int         @id @default(autoincrement())
+  user_id             String?     // Nullable for guest checkout
+  order_number        String      @unique // e.g., ORD-20260202-001
+
+  // Customer Info (stored for guest orders)
+  customer_email      String
+  customer_name       String
+
+  // Shipping Address
+  shipping_address_id Int?
+  shipping_street     String
+  shipping_city       String
+  shipping_state      String
+  shipping_zip        String
+  shipping_country    String      @default("US")
+
+  // Order Details
+  subtotal            Decimal     @db.Decimal(10, 2)
+  tax                 Decimal     @db.Decimal(10, 2) @default(0)
+  shipping_cost       Decimal     @db.Decimal(10, 2) @default(0)
+  total               Decimal     @db.Decimal(10, 2)
+
+  // Payment Info
+  payment_method      String      // stripe, venmo
+  payment_status      String      @default("pending") // pending, paid, failed, refunded
+  payment_intent_id   String?     // Stripe payment intent ID
+
+  // Order Status
+  order_status        String      @default("processing") // processing, shipped, delivered, cancelled
+
+  // Timestamps
+  created_at          DateTime    @default(now())
+  updated_at          DateTime    @updatedAt
+
+  // Relations
+  user                User?       @relation(fields: [user_id], references: [id])
+  shipping_address    Address?    @relation(fields: [shipping_address_id], references: [id])
+  order_items         OrderItem[]
+
+  @@map("orders")
+}
+
+model OrderItem {
+  id            Int      @id @default(autoincrement())
+  order_id      Int
+  product_id    Int
+  quantity      Int
+  price_at_time Decimal  @db.Decimal(10, 2) // Store price at time of purchase
+  created_at    DateTime @default(now())
+
+  // Relations
+  order         Order    @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  product       Product  @relation(fields: [product_id], references: [id])
+
+  @@map("order_items")
+}
+
+// ============================================
+// CUSTOMER ADDRESSES
+// ============================================
+
+model Address {
+  id         Int      @id @default(autoincrement())
+  user_id    String
+
+  street     String
+  city       String
+  state      String
+  zip        String
+  country    String   @default("US")
+
+  is_default Boolean  @default(false)
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  // Relations
+  user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  orders     Order[]
+
+  @@map("addresses")
+}
+
+// ============================================
+// INVENTORY MANAGEMENT
+// ============================================
+
+model InventoryLog {
+  id               Int      @id @default(autoincrement())
+  product_id       Int
+  change_quantity  Int      // Positive for stock increase, negative for decrease
+  reason           String   // "sale", "restock", "adjustment", "google_sheets_sync"
+  notes            String?  @db.Text
+  created_at       DateTime @default(now())
+
+  // Relations
+  product          Product  @relation(fields: [product_id], references: [id])
+
+  @@map("inventory_log")
+}

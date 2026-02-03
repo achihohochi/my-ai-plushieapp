@@ -165,14 +165,16 @@ The easiest way to deploy is using Vercel:
 
 #### Method 2: Deploy via Vercel CLI
 
-** ENSURE you're in the root dir of the project folder, before running the below commands **
+** ENSURE you're in the root dir of the project folder, before running the below commands - [added by RCL] **
+
+For first-time setup, Vercel will prompt you for project configuration. 
 ```bash
 npm i -g vercel
 vercel login
 vercel --prod
 ```
 
-For first-time setup, Vercel will prompt you for project configuration. Subsequent deployments: use `vercel --prod` for production or `vercel` for previews.
+Subsequent deployments: use `vercel --prod` for production or `vercel` for previews.
 
 #### Post-Deployment
 
