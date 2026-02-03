@@ -15,9 +15,9 @@ export function ProductCard({ product }: ProductCardProps) {
   const [isLiked, setIsLiked] = useState(false)
   const [isAdding, setIsAdding] = useState(false)
 
-  const handleAddToCart = () => {
+  const handleAddToCart = async () => {
     setIsAdding(true)
-    addItem(product)
+    await addItem(product)
     setTimeout(() => setIsAdding(false), 300)
   }
 

@@ -3,6 +3,7 @@
 import { X, Minus, Plus, ShoppingBag } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useCart } from "@/components/cart-context"
+import Link from "next/link"
 
 export function CartSidebar() {
   const { items, isOpen, setIsOpen, removeItem, updateQuantity, totalPrice, totalItems } = useCart()
@@ -79,7 +80,18 @@ export function CartSidebar() {
               <span className="text-muted-foreground font-semibold">Subtotal</span>
               <span className="text-2xl font-extrabold text-foreground">${totalPrice.toFixed(2)}</span>
             </div>
-            <Button className="w-full rounded-full font-bold text-lg py-6">Checkout 💖</Button>
+            <Link href="/checkout">
+              <Button className="w-full rounded-full font-bold text-lg py-6" onClick={() => setIsOpen(false)}>
+                Checkout 💖
+              </Button>
+            </Link>
+            <Button
+              variant="outline"
+              className="w-full rounded-full font-semibold mt-3"
+              onClick={() => setIsOpen(false)}
+            >
+              Continue Shopping
+            </Button>
             <p className="text-center text-xs text-muted-foreground mt-3">Free shipping on orders over $50! 🚚</p>
           </div>
         )}
