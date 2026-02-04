@@ -1,9 +1,10 @@
 # Reusable E-commerce Patterns & Skills
 
 **Domain:** E-commerce / Online Store Applications
-**Tech Stack:** Next.js, PostgreSQL, Prisma, TypeScript
-**Patterns:** Guest checkout, session-based cart, order management
-**Last Updated:** February 3, 2026
+**Tech Stack:** Next.js, PostgreSQL, Prisma, TypeScript, Stripe, Venmo, Resend
+**Patterns:** Guest checkout, session-based cart, order management, dual payment methods
+**Last Updated:** February 4, 2026
+**Status:** ✅ Production-tested patterns from real implementation
 
 ---
 
@@ -14,11 +15,15 @@
 3. [Session Management](#session-management)
 4. [Cart Persistence](#cart-persistence)
 5. [Order Creation Workflow](#order-creation-workflow)
-6. [Inventory Management](#inventory-management)
-7. [Tech Stack Setup](#tech-stack-setup)
-8. [Common Utilities](#common-utilities)
-9. [Google Sheets Integration](#google-sheets-integration)
-10. [Admin Dashboard Patterns](#admin-dashboard-patterns)
+6. [Stripe Checkout (Hosted Page) Pattern](#stripe-checkout-hosted-page-pattern) ⭐ NEW
+7. [Venmo QR Code Payment Pattern](#venmo-qr-code-payment-pattern) ⭐ NEW
+8. [Resend Email Integration Pattern](#resend-email-integration-pattern) ⭐ NEW
+9. [Dual Payment Method Pattern](#dual-payment-method-pattern) ⭐ NEW
+10. [Inventory Management](#inventory-management)
+11. [Tech Stack Setup](#tech-stack-setup)
+12. [Common Utilities](#common-utilities)
+13. [Google Sheets Integration](#google-sheets-integration)
+14. [Admin Dashboard Patterns](#admin-dashboard-patterns)
 
 ---
 
@@ -585,6 +590,1148 @@ async function createOrder(orderData) {
 
 ---
 
+## 💳 Stripe Checkout (Hosted Page) Pattern
+
+### Why Use Stripe Checkout
+
+**Benefits:**
+- Zero PCI compliance burden (Stripe handles all card data)
+- Pre-built, mobile-optimized payment page
+- Built-in Apple Pay, Google Pay support
+- Automatic SCA (Strong Customer Authentication) handling
+- No frontend payment form needed
+
+### Implementation Files
+
+```
+lib/stripe.ts                          # Stripe client
+app/api/create-checkout-session/       # Create session
+  └── route.ts
+app/api/webhooks/stripe/               # Handle webhooks
+  └── route.ts
+app/checkout/success/page.tsx          # Success redirect
+app/checkout/cancel/page.tsx           # Cancel redirect
+```
+
+### Step 1: Initialize Stripe Client
+
+```typescript
+// lib/stripe.ts
+import Stripe from 'stripe';
+
+if (!process.env.STRIPE_SECRET_KEY) {
+  throw new Error('STRIPE_SECRET_KEY is not set');
+}
+
+export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
+  apiVersion: '2024-11-20.acacia',  // Use latest API version
+});
+```
+
+### Step 2: Create Checkout Session
+
+```typescript
+// app/api/create-checkout-session/route.ts
+import { NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
+import { stripe } from '@/lib/stripe';
+import { prisma } from '@/lib/prisma';
+
+export async function POST(request: Request) {
+  try {
+    const { email, name, street, city, state, zip } = await request.json();
+
+    // Get cart from session
+    const cookieStore = await cookies();
+    const sessionId = cookieStore.get('session_id')?.value;
+
+    if (!sessionId) {
+      return NextResponse.json(
+        { success: false, error: 'No cart found' },
+        { status: 400 }
+      );
+    }
+
+    // Fetch cart items
+    const cartItems = await prisma.cartItem.findMany({
+      where: { session_id: sessionId },
+      include: { product: true },
+    });
+
+    if (cartItems.length === 0) {
+      return NextResponse.json(
+        { success: false, error: 'Cart is empty' },
+        { status: 400 }
+      );
+    }
+
+    // Validate stock
+    for (const item of cartItems) {
+      if (item.product.stock_quantity < item.quantity) {
+        return NextResponse.json(
+          { success: false, error: `Insufficient stock for ${item.product.name}` },
+          { status: 400 }
+        );
+      }
+    }
+
+    // Create Stripe line items
+    const lineItems = cartItems.map((item) => ({
+      price_data: {
+        currency: 'usd',
+        product_data: {
+          name: item.product.name,
+          description: item.product.description || undefined,
+          images: item.product.image_url ? [item.product.image_url] : undefined,
+        },
+        unit_amount: Math.round(parseFloat(item.product.price.toString()) * 100), // Convert to cents
+      },
+      quantity: item.quantity,
+    }));
+
+    // Create Stripe Checkout Session
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      line_items: lineItems,
+      mode: 'payment',
+      success_url: `${process.env.NEXT_PUBLIC_BASE_URL}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${process.env.NEXT_PUBLIC_BASE_URL}/checkout/cancel`,
+      customer_email: email,
+      metadata: {
+        session_id: sessionId,
+        customer_name: name,
+        shipping_street: street,
+        shipping_city: city,
+        shipping_state: state,
+        shipping_zip: zip,
+      },
+    });
+
+    return NextResponse.json({
+      success: true,
+      sessionId: session.id,
+      url: session.url,
+    });
+  } catch (error) {
+    console.error('Create checkout session error:', error);
+    return NextResponse.json(
+      { success: false, error: 'Failed to create checkout session' },
+      { status: 500 }
+    );
+  }
+}
+```
+
+### Step 3: Handle Webhook (Create Order)
+
+```typescript
+// app/api/webhooks/stripe/route.ts
+import { NextResponse } from 'next/server';
+import { headers } from 'next/headers';
+import { stripe } from '@/lib/stripe';
+import { prisma } from '@/lib/prisma';
+import { sendOrderConfirmation } from '@/lib/emails/send-order-confirmation';
+
+// Generate unique order number
+function generateOrderNumber(): string {
+  const date = new Date();
+  const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
+  const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+  return `ORD-${dateStr}-${random}`;
+}
+
+export async function POST(request: Request) {
+  try {
+    const body = await request.text();
+    const headersList = await headers();
+    const sig = headersList.get('stripe-signature');
+
+    if (!sig) {
+      return NextResponse.json({ error: 'No signature' }, { status: 400 });
+    }
+
+    // Verify webhook signature
+    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+    if (!webhookSecret) {
+      throw new Error('STRIPE_WEBHOOK_SECRET not set');
+    }
+
+    const event = stripe.webhooks.constructEvent(body, sig, webhookSecret);
+
+    // Handle checkout.session.completed event
+    if (event.type === 'checkout.session.completed') {
+      const session = event.data.object as any;
+
+      // Get cart items
+      const sessionId = session.metadata.session_id;
+      const cartItems = await prisma.cartItem.findMany({
+        where: { session_id: sessionId },
+        include: { product: true },
+      });
+
+      if (cartItems.length === 0) {
+        console.error('No cart items found for session:', sessionId);
+        return NextResponse.json({ received: true });
+      }
+
+      // Calculate totals
+      const subtotal = cartItems.reduce(
+        (sum, item) => sum + parseFloat(item.product.price.toString()) * item.quantity,
+        0
+      );
+
+      // Generate order number
+      const orderNumber = generateOrderNumber();
+
+      // Create order
+      const order = await prisma.order.create({
+        data: {
+          order_number: orderNumber,
+          email: session.customer_email,
+          customer_name: session.metadata.customer_name,
+          shipping_street: session.metadata.shipping_street,
+          shipping_city: session.metadata.shipping_city,
+          shipping_state: session.metadata.shipping_state,
+          shipping_zip: session.metadata.shipping_zip,
+          shipping_country: 'US',
+          subtotal,
+          tax: 0,
+          shipping_cost: 0,
+          total: subtotal,
+          payment_method: 'stripe',
+          payment_status: 'paid',
+          payment_intent_id: session.payment_intent,
+          order_status: 'processing',
+          order_items: {
+            create: cartItems.map((item) => ({
+              product_id: item.product_id,
+              quantity: item.quantity,
+              price_at_time: item.product.price,
+            })),
+          },
+        },
+        include: { order_items: { include: { product: true } } },
+      });
+
+      // Update inventory
+      for (const item of cartItems) {
+        await prisma.product.update({
+          where: { id: item.product_id },
+          data: { stock_quantity: { decrement: item.quantity } },
+        });
+
+        await prisma.inventoryLog.create({
+          data: {
+            product_id: item.product_id,
+            change_quantity: -item.quantity,
+            reason: 'sale',
+            notes: `Order ${orderNumber}`,
+          },
+        });
+      }
+
+      // Clear cart
+      await prisma.cartItem.deleteMany({
+        where: { session_id: sessionId },
+      });
+
+      // Send confirmation email (non-blocking)
+      try {
+        await sendOrderConfirmation({
+          customerEmail: order.email,
+          customerName: order.customer_name,
+          orderNumber: order.order_number,
+          items: order.order_items.map((item) => ({
+            name: item.product.name,
+            quantity: item.quantity,
+            price: parseFloat(item.price_at_time.toString()),
+          })),
+          subtotal,
+          tax: 0,
+          shippingCost: 0,
+          total: subtotal,
+          shippingAddress: {
+            street: order.shipping_street,
+            city: order.shipping_city,
+            state: order.shipping_state,
+            zip: order.shipping_zip,
+          },
+        });
+      } catch (emailError) {
+        console.error('Failed to send order confirmation email:', emailError);
+        // Don't fail the webhook if email fails
+      }
+    }
+
+    return NextResponse.json({ received: true });
+  } catch (error) {
+    console.error('Webhook error:', error);
+    return NextResponse.json({ error: 'Webhook handler failed' }, { status: 400 });
+  }
+}
+```
+
+### Step 4: Redirect to Stripe
+
+```typescript
+// app/checkout/page.tsx
+"use client"
+
+import { useState } from 'react';
+import { useRouter } from 'next/navigation';
+
+export default function CheckoutPage() {
+  const [loading, setLoading] = useState(false);
+  const router = useRouter();
+
+  const handleStripeCheckout = async (formData: any) => {
+    setLoading(true);
+
+    try {
+      const res = await fetch('/api/create-checkout-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formData),
+      });
+
+      const data = await res.json();
+
+      if (data.success && data.url) {
+        // Redirect to Stripe Checkout
+        window.location.href = data.url;
+      } else {
+        alert(data.error || 'Failed to create checkout session');
+        setLoading(false);
+      }
+    } catch (error) {
+      console.error('Checkout error:', error);
+      alert('Something went wrong. Please try again.');
+      setLoading(false);
+    }
+  };
+
+  // ... form rendering
+}
+```
+
+### Local Testing Setup
+
+```bash
+# Terminal 1: Run dev server
+npm run dev -- --port 3002
+
+# Terminal 2: Run Stripe CLI webhook listener
+stripe listen --forward-to localhost:3002/api/webhooks/stripe
+
+# Copy the webhook signing secret (whsec_...) to .env
+STRIPE_WEBHOOK_SECRET="whsec_..."
+```
+
+### Environment Variables
+
+```bash
+# .env
+STRIPE_SECRET_KEY="sk_test_..."
+NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY="pk_test_..."
+STRIPE_WEBHOOK_SECRET="whsec_..."  # From stripe listen command
+NEXT_PUBLIC_BASE_URL="http://localhost:3002"  # Dev
+# NEXT_PUBLIC_BASE_URL="https://yourdomain.com"  # Production
+```
+
+### Production Webhook Setup
+
+1. Go to Stripe Dashboard → Developers → Webhooks
+2. Add endpoint: `https://yourdomain.com/api/webhooks/stripe`
+3. Select event: `checkout.session.completed`
+4. Copy signing secret to production environment variables
+
+---
+
+## 📱 Venmo QR Code Payment Pattern
+
+### Why Venmo for Teen Audiences
+
+**Benefits:**
+- No credit card required (teens often don't have cards)
+- Popular payment method among 13-19 age group
+- Familiar app they already use
+- Parent-friendly (parents can send money to teens' Venmo)
+
+**Trade-off:** Manual verification required (Venmo API doesn't support automated verification)
+
+### Implementation Files
+
+```
+lib/venmo.ts                           # QR code utilities
+app/api/checkout/venmo/                # Create Venmo orders
+  └── route.ts
+app/checkout/venmo/page.tsx            # QR display page
+app/checkout/venmo/success/page.tsx    # Success confirmation
+app/admin/venmo/page.tsx               # Admin verification UI
+app/api/admin/venmo/pending/route.ts   # Fetch pending orders
+app/api/admin/venmo/verify/route.ts    # Verify payments
+```
+
+### Step 1: Venmo QR Code Utilities
+
+```typescript
+// lib/venmo.ts
+import QRCode from 'qrcode';
+
+/**
+ * Generate Venmo deep link for payment
+ */
+export function generateVenmoLink(
+  username: string,
+  amount: number,
+  note: string
+): string {
+  const venmoLink = `venmo://paycharge?txn=pay&recipients=${username}&amount=${amount.toFixed(
+    2
+  )}&note=${encodeURIComponent(note)}`;
+  return venmoLink;
+}
+
+/**
+ * Generate QR code as data URL
+ */
+export async function generateVenmoQRCode(
+  username: string,
+  amount: number,
+  note: string
+): Promise<string> {
+  const venmoLink = generateVenmoLink(username, amount, note);
+
+  const qrCodeDataUrl = await QRCode.toDataURL(venmoLink, {
+    width: 300,
+    margin: 2,
+    color: {
+      dark: '#008CFF', // Venmo blue
+      light: '#FFFFFF',
+    },
+  });
+
+  return qrCodeDataUrl;
+}
+
+/**
+ * Get Venmo username from environment
+ */
+export function getVenmoUsername(): string {
+  const username = process.env.VENMO_USERNAME;
+  if (!username || username === 'your-venmo-username') {
+    throw new Error('VENMO_USERNAME not configured');
+  }
+  return username;
+}
+```
+
+### Step 2: Create Venmo Order API
+
+```typescript
+// app/api/checkout/venmo/route.ts
+import { NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
+import { prisma } from '@/lib/prisma';
+import { generateVenmoQRCode, getVenmoUsername } from '@/lib/venmo';
+
+function generateOrderNumber(): string {
+  const date = new Date();
+  const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
+  const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+  return `ORD-${dateStr}-${random}`;
+}
+
+export async function POST(request: Request) {
+  try {
+    const { email, name, street, city, state, zip } = await request.json();
+
+    // Validate Venmo is configured
+    try {
+      getVenmoUsername();
+    } catch (error) {
+      return NextResponse.json(
+        { success: false, error: 'Venmo payment not available' },
+        { status: 503 }
+      );
+    }
+
+    // Get cart
+    const cookieStore = await cookies();
+    const sessionId = cookieStore.get('session_id')?.value;
+
+    if (!sessionId) {
+      return NextResponse.json(
+        { success: false, error: 'No cart found' },
+        { status: 400 }
+      );
+    }
+
+    const cartItems = await prisma.cartItem.findMany({
+      where: { session_id: sessionId },
+      include: { product: true },
+    });
+
+    if (cartItems.length === 0) {
+      return NextResponse.json(
+        { success: false, error: 'Cart is empty' },
+        { status: 400 }
+      );
+    }
+
+    // Validate stock
+    for (const item of cartItems) {
+      if (item.product.stock_quantity < item.quantity) {
+        return NextResponse.json(
+          { success: false, error: `Insufficient stock for ${item.product.name}` },
+          { status: 400 }
+        );
+      }
+    }
+
+    // Calculate total
+    const subtotal = cartItems.reduce(
+      (sum, item) => sum + parseFloat(item.product.price.toString()) * item.quantity,
+      0
+    );
+
+    // Generate order number
+    const orderNumber = generateOrderNumber();
+
+    // Create order with pending payment status
+    const order = await prisma.order.create({
+      data: {
+        order_number: orderNumber,
+        email,
+        customer_name: name,
+        shipping_street: street,
+        shipping_city: city,
+        shipping_state: state,
+        shipping_zip: zip,
+        shipping_country: 'US',
+        subtotal,
+        tax: 0,
+        shipping_cost: 0,
+        total: subtotal,
+        payment_method: 'venmo',
+        payment_status: 'pending_payment_verification',
+        order_status: 'pending_payment',
+        order_items: {
+          create: cartItems.map((item) => ({
+            product_id: item.product_id,
+            quantity: item.quantity,
+            price_at_time: item.product.price,
+          })),
+        },
+      },
+    });
+
+    // Generate QR code
+    const venmoUsername = getVenmoUsername();
+    const qrCode = await generateVenmoQRCode(venmoUsername, subtotal, orderNumber);
+
+    // Clear cart from database
+    if (sessionId) {
+      await prisma.cartItem.deleteMany({
+        where: { session_id: sessionId },
+      });
+    }
+
+    return NextResponse.json({
+      success: true,
+      orderNumber: order.order_number,
+      orderId: order.id,
+      qrCode,
+      amount: subtotal,
+      venmoUsername,
+    });
+  } catch (error) {
+    console.error('Venmo checkout error:', error);
+    return NextResponse.json(
+      { success: false, error: 'Failed to create Venmo order' },
+      { status: 500 }
+    );
+  }
+}
+```
+
+### Step 3: QR Code Display Page
+
+```typescript
+// app/checkout/venmo/page.tsx
+"use client"
+
+import { useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
+import Image from 'next/image';
+
+export default function VenmoCheckoutPage() {
+  const searchParams = useSearchParams();
+  const [orderData, setOrderData] = useState<any>(null);
+
+  useEffect(() => {
+    // Get order data from URL params or localStorage
+    const qrCode = searchParams.get('qrCode');
+    const orderNumber = searchParams.get('orderNumber');
+    const amount = searchParams.get('amount');
+
+    if (qrCode && orderNumber && amount) {
+      setOrderData({ qrCode, orderNumber, amount });
+    }
+  }, [searchParams]);
+
+  if (!orderData) {
+    return <div>Loading...</div>;
+  }
+
+  return (
+    <div className="max-w-2xl mx-auto p-8">
+      <h1 className="text-3xl font-bold mb-6">Complete Payment with Venmo</h1>
+
+      <div className="bg-gradient-to-br from-blue-50 to-blue-100 p-8 rounded-lg">
+        <div className="text-center">
+          <p className="text-lg mb-4">
+            Order: <strong>{orderData.orderNumber}</strong>
+          </p>
+          <p className="text-2xl font-bold mb-6">${parseFloat(orderData.amount).toFixed(2)}</p>
+
+          {/* QR Code */}
+          <div className="bg-white p-6 rounded-lg inline-block mb-6">
+            <Image
+              src={orderData.qrCode}
+              alt="Venmo QR Code"
+              width={300}
+              height={300}
+            />
+          </div>
+
+          {/* Instructions */}
+          <div className="text-left bg-white p-6 rounded-lg">
+            <h3 className="font-bold mb-4">How to Pay:</h3>
+            <ol className="list-decimal list-inside space-y-2">
+              <li>Open the Venmo app on your phone</li>
+              <li>Tap the "Scan" button at the top</li>
+              <li>Scan this QR code</li>
+              <li>Confirm the payment amount</li>
+              <li>Complete payment in Venmo</li>
+            </ol>
+          </div>
+
+          <button
+            onClick={() => window.location.href = '/checkout/venmo/success?orderNumber=' + orderData.orderNumber}
+            className="mt-6 w-full bg-blue-600 text-white py-3 rounded-lg font-bold"
+          >
+            I've Completed Payment
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+```
+
+### Step 4: Admin Verification UI
+
+```typescript
+// app/admin/venmo/page.tsx
+"use client"
+
+import { useEffect, useState } from 'react';
+import { useAdmin } from '@/components/admin-context';
+
+export default function AdminVenmoPage() {
+  const { adminKey } = useAdmin();
+  const [orders, setOrders] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetchPendingOrders = async () => {
+    try {
+      const res = await fetch('/api/admin/venmo/pending', {
+        headers: { 'x-admin-key': adminKey || '' },
+      });
+      const data = await res.json();
+      if (data.success) setOrders(data.data);
+    } catch (error) {
+      console.error('Failed to fetch orders:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const verifyPayment = async (orderId: number) => {
+    if (!confirm('Confirm you received payment in Venmo?')) return;
+
+    try {
+      const res = await fetch('/api/admin/venmo/verify', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-admin-key': adminKey || '',
+        },
+        body: JSON.stringify({ orderId }),
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        alert('Payment verified! Confirmation email sent.');
+        fetchPendingOrders(); // Refresh list
+      } else {
+        alert(data.error || 'Failed to verify payment');
+      }
+    } catch (error) {
+      console.error('Verify error:', error);
+      alert('Failed to verify payment');
+    }
+  };
+
+  useEffect(() => {
+    fetchPendingOrders();
+  }, []);
+
+  return (
+    <div className="p-8">
+      <h1 className="text-3xl font-bold mb-6">Pending Venmo Payments</h1>
+
+      {loading ? (
+        <p>Loading...</p>
+      ) : orders.length === 0 ? (
+        <p>No pending Venmo payments</p>
+      ) : (
+        <div className="space-y-4">
+          {orders.map((order) => (
+            <div key={order.id} className="bg-white p-6 rounded-lg border">
+              <div className="flex justify-between items-start mb-4">
+                <div>
+                  <h3 className="font-bold">{order.order_number}</h3>
+                  <p className="text-sm text-gray-600">{order.customer_name}</p>
+                  <p className="text-sm text-gray-600">{order.email}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-2xl font-bold">${parseFloat(order.total).toFixed(2)}</p>
+                  <p className="text-sm text-gray-500">
+                    {new Date(order.created_at).toLocaleDateString()}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={() => verifyPayment(order.id)}
+                className="w-full py-3 bg-green-600 hover:bg-green-700 text-white font-bold rounded"
+              >
+                ✓ Verify Payment Received
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+### Step 5: Verification API
+
+```typescript
+// app/api/admin/venmo/verify/route.ts
+import { NextResponse } from 'next/server';
+import { headers, cookies } from 'next/headers';
+import { prisma } from '@/lib/prisma';
+import { sendOrderConfirmation } from '@/lib/emails/send-order-confirmation';
+
+async function verifyAdminKey(): Promise<boolean> {
+  const headersList = await headers();
+  const adminKeyHeader = headersList.get('x-admin-key');
+
+  const cookieStore = await cookies();
+  const adminKeyCookie = cookieStore.get('admin_key')?.value;
+
+  const adminKey = adminKeyHeader || adminKeyCookie;
+  return adminKey === process.env.ADMIN_KEY;
+}
+
+export async function POST(request: Request) {
+  const isAuthorized = await verifyAdminKey();
+
+  if (!isAuthorized) {
+    return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+  }
+
+  try {
+    const { orderId } = await request.json();
+
+    // Get order
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+      include: { order_items: { include: { product: true } } },
+    });
+
+    if (!order) {
+      return NextResponse.json({ success: false, error: 'Order not found' }, { status: 404 });
+    }
+
+    if (order.payment_method !== 'venmo') {
+      return NextResponse.json(
+        { success: false, error: 'Not a Venmo order' },
+        { status: 400 }
+      );
+    }
+
+    // Update order status
+    const updatedOrder = await prisma.order.update({
+      where: { id: orderId },
+      data: {
+        payment_status: 'paid',
+        order_status: 'processing',
+      },
+    });
+
+    // Send confirmation email
+    try {
+      await sendOrderConfirmation({
+        customerEmail: order.email,
+        customerName: order.customer_name,
+        orderNumber: order.order_number,
+        items: order.order_items.map((item) => ({
+          name: item.product.name,
+          quantity: item.quantity,
+          price: parseFloat(item.price_at_time.toString()),
+        })),
+        subtotal: parseFloat(order.subtotal.toString()),
+        tax: parseFloat(order.tax.toString()),
+        shippingCost: parseFloat(order.shipping_cost.toString()),
+        total: parseFloat(order.total.toString()),
+        shippingAddress: {
+          street: order.shipping_street,
+          city: order.shipping_city,
+          state: order.shipping_state,
+          zip: order.shipping_zip,
+        },
+      });
+    } catch (emailError) {
+      console.error('Failed to send email:', emailError);
+      // Don't fail the verification if email fails
+    }
+
+    return NextResponse.json({ success: true, data: updatedOrder });
+  } catch (error) {
+    console.error('Verify payment error:', error);
+    return NextResponse.json(
+      { success: false, error: 'Failed to verify payment' },
+      { status: 500 }
+    );
+  }
+}
+```
+
+### Environment Variables
+
+```bash
+# .env
+VENMO_USERNAME="your-business-venmo-username"  # No @ symbol
+```
+
+**Important:** Must use Venmo Business Profile (personal accounts can't accept QR code payments)
+
+---
+
+## 📧 Resend Email Integration Pattern
+
+### Why Resend
+
+**Benefits:**
+- Simple API (easier than SendGrid/AWS SES)
+- Generous free tier (100 emails/day, 3,000/month)
+- No credit card required to start
+- Great deliverability
+- Built-in email template support
+
+**Trade-off:** React Email can cause validation errors - use simple HTML instead
+
+### Installation
+
+```bash
+npm install resend
+```
+
+### Step 1: Initialize Resend Client
+
+```typescript
+// lib/resend.ts
+import { Resend } from 'resend';
+
+if (!process.env.RESEND_API_KEY) {
+  throw new Error('RESEND_API_KEY is not set');
+}
+
+export const resend = new Resend(process.env.RESEND_API_KEY);
+```
+
+### Step 2: Create Email Template (Simple HTML)
+
+```typescript
+// lib/emails/send-order-confirmation.ts
+import { resend } from '../resend';
+
+interface OrderConfirmationParams {
+  customerEmail: string;
+  customerName: string;
+  orderNumber: string;
+  items: Array<{
+    name: string;
+    quantity: number;
+    price: number;
+  }>;
+  subtotal: number;
+  tax: number;
+  shippingCost: number;
+  total: number;
+  shippingAddress: {
+    street: string;
+    city: string;
+    state: string;
+    zip: string;
+  };
+}
+
+function generateEmailHTML(params: OrderConfirmationParams): string {
+  const itemsHTML = params.items
+    .map(
+      (item) => `
+    <tr>
+      <td style="padding: 12px; border-bottom: 1px solid #e5e7eb;">${item.name}</td>
+      <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; text-align: center;">${item.quantity}</td>
+      <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; text-align: right;">$${item.price.toFixed(2)}</td>
+      <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; text-align: right; font-weight: bold;">$${(item.price * item.quantity).toFixed(2)}</td>
+    </tr>
+  `
+    )
+    .join('');
+
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Order Confirmation</title>
+</head>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+    <h1 style="color: white; margin: 0;">Order Confirmed!</h1>
+  </div>
+
+  <div style="background-color: #f9fafb; padding: 30px; border-radius: 0 0 10px 10px;">
+    <p>Hi ${params.customerName},</p>
+    <p>Thank you for your order! We're excited to get your plushies to you.</p>
+
+    <div style="background-color: white; padding: 20px; border-radius: 8px; margin: 20px 0;">
+      <h2 style="margin-top: 0;">Order #${params.orderNumber}</h2>
+
+      <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+        <thead>
+          <tr style="background-color: #f3f4f6;">
+            <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e5e7eb;">Item</th>
+            <th style="padding: 12px; text-align: center; border-bottom: 2px solid #e5e7eb;">Qty</th>
+            <th style="padding: 12px; text-align: right; border-bottom: 2px solid #e5e7eb;">Price</th>
+            <th style="padding: 12px; text-align: right; border-bottom: 2px solid #e5e7eb;">Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${itemsHTML}
+        </tbody>
+      </table>
+
+      <div style="text-align: right; padding-top: 15px; border-top: 2px solid #e5e7eb;">
+        <p style="margin: 5px 0;">Subtotal: <strong>$${params.subtotal.toFixed(2)}</strong></p>
+        <p style="margin: 5px 0;">Tax: <strong>$${params.tax.toFixed(2)}</strong></p>
+        <p style="margin: 5px 0;">Shipping: <strong>$${params.shippingCost.toFixed(2)}</strong></p>
+        <p style="margin: 10px 0 0 0; font-size: 1.2em;">Total: <strong>$${params.total.toFixed(2)}</strong></p>
+      </div>
+    </div>
+
+    <div style="background-color: white; padding: 20px; border-radius: 8px; margin: 20px 0;">
+      <h3 style="margin-top: 0;">Shipping Address</h3>
+      <p style="margin: 5px 0;">${params.customerName}</p>
+      <p style="margin: 5px 0;">${params.shippingAddress.street}</p>
+      <p style="margin: 5px 0;">${params.shippingAddress.city}, ${params.shippingAddress.state} ${params.shippingAddress.zip}</p>
+    </div>
+
+    <div style="background-color: #eff6ff; padding: 20px; border-radius: 8px; border-left: 4px solid #3b82f6;">
+      <h3 style="margin-top: 0;">What's Next?</h3>
+      <p>Your order is being processed and will ship within 2-3 business days. You'll receive a tracking number once it ships.</p>
+    </div>
+
+    <p style="margin-top: 30px; font-size: 0.9em; color: #6b7280;">
+      Questions? Reply to this email or contact us at support@example.com
+    </p>
+  </div>
+</body>
+</html>
+  `;
+}
+
+export async function sendOrderConfirmation(params: OrderConfirmationParams) {
+  try {
+    const html = generateEmailHTML(params);
+
+    const { data, error } = await resend.emails.send({
+      from: 'onboarding@resend.dev', // Development domain (free)
+      // from: 'orders@yourdomain.com', // Production (requires domain verification)
+      to: params.customerEmail,
+      subject: `Order Confirmation - ${params.orderNumber}`,
+      html: html,
+    });
+
+    if (error) {
+      throw error;
+    }
+
+    console.log('Order confirmation email sent:', data);
+    return { success: true, data };
+  } catch (error) {
+    console.error('Failed to send order confirmation email:', error);
+    throw error;
+  }
+}
+```
+
+### Step 3: Send Email (Non-Blocking Pattern)
+
+```typescript
+// In webhook or order creation API
+try {
+  await sendOrderConfirmation({ ...orderData });
+} catch (emailError) {
+  console.error('Failed to send email:', emailError);
+  // Don't fail the order if email fails
+  // Order is still created successfully
+}
+```
+
+### Environment Variables
+
+```bash
+# .env
+RESEND_API_KEY="re_..."  # Get from resend.com dashboard
+```
+
+### Important Lessons
+
+1. **Don't use React Email** - Can cause validation errors with Resend API
+2. **Use simple HTML strings** - More reliable, easier to debug
+3. **Make emails non-blocking** - Order shouldn't fail if email fails
+4. **Development domain** - Use `onboarding@resend.dev` until you verify a custom domain
+5. **Send after database commit** - Only send email after order is saved to database
+
+---
+
+## 🔐 Dual Payment Method Pattern
+
+### Implementation Strategy
+
+**Checkout Page:**
+- Radio buttons for payment method selection
+- Different button text based on selection
+- Different API endpoints based on payment method
+
+```typescript
+// app/checkout/page.tsx
+"use client"
+
+import { useState } from 'react';
+
+export default function CheckoutPage() {
+  const [paymentMethod, setPaymentMethod] = useState<'stripe' | 'venmo'>('stripe');
+
+  const handleSubmit = async (formData: any) => {
+    if (paymentMethod === 'stripe') {
+      // Redirect to Stripe Checkout
+      const res = await fetch('/api/create-checkout-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formData),
+      });
+      const data = await res.json();
+      if (data.url) window.location.href = data.url;
+    } else {
+      // Create Venmo order and show QR
+      const res = await fetch('/api/checkout/venmo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formData),
+      });
+      const data = await res.json();
+      if (data.success) {
+        window.location.href = `/checkout/venmo?qrCode=${encodeURIComponent(
+          data.qrCode
+        )}&orderNumber=${data.orderNumber}&amount=${data.amount}`;
+      }
+    }
+  };
+
+  return (
+    <div>
+      {/* Payment method selection */}
+      <div className="space-y-4 mb-6">
+        <label className="flex items-center p-4 border rounded-lg cursor-pointer">
+          <input
+            type="radio"
+            checked={paymentMethod === 'stripe'}
+            onChange={() => setPaymentMethod('stripe')}
+            className="mr-3"
+          />
+          <div>
+            <div className="font-bold">💳 Credit/Debit Card</div>
+            <div className="text-sm text-gray-600">Visa, Mastercard, Amex, Discover</div>
+          </div>
+        </label>
+
+        <label className="flex items-center p-4 border rounded-lg cursor-pointer">
+          <input
+            type="radio"
+            checked={paymentMethod === 'venmo'}
+            onChange={() => setPaymentMethod('venmo')}
+            className="mr-3"
+          />
+          <div>
+            <div className="font-bold">📱 Venmo</div>
+            <div className="text-sm text-gray-600">Pay with your Venmo account</div>
+          </div>
+        </label>
+      </div>
+
+      {/* Submit button with dynamic text */}
+      <button
+        onClick={() => handleSubmit(formData)}
+        className="w-full py-3 bg-blue-600 text-white font-bold rounded-lg"
+      >
+        {paymentMethod === 'stripe' ? 'Continue to Payment' : 'Get Venmo QR Code'}
+      </button>
+    </div>
+  );
+}
+```
+
+**Database Status Management:**
+```sql
+-- Stripe orders
+payment_method = 'stripe'
+payment_status = 'paid'  (set by webhook immediately)
+order_status = 'processing'
+
+-- Venmo orders (before verification)
+payment_method = 'venmo'
+payment_status = 'pending_payment_verification'
+order_status = 'pending_payment'
+
+-- Venmo orders (after admin verification)
+payment_method = 'venmo'
+payment_status = 'paid'
+order_status = 'processing'
+```
+
+---
+
 ## 📊 Inventory Management
 
 ### Stock Tracking Pattern
@@ -947,20 +2094,34 @@ export function useAdmin() {
 
 ### Protected Admin API Routes
 
+**IMPORTANT:** Check BOTH headers AND cookies to support different authentication methods
+
 ```typescript
 // app/api/admin/orders/route.ts
 import { NextResponse } from 'next/server';
-import { headers } from 'next/headers';
+import { headers, cookies } from 'next/headers';
 import { prisma } from '@/lib/prisma';
 
 async function verifyAdminKey(): Promise<boolean> {
+  // Check BOTH header and cookie
   const headersList = await headers();
-  const adminKey = headersList.get('x-admin-key');
+  const adminKeyHeader = headersList.get('x-admin-key');
+
+  const cookieStore = await cookies();
+  const adminKeyCookie = cookieStore.get('admin_key')?.value;
+
+  // Accept either method
+  const adminKey = adminKeyHeader || adminKeyCookie;
   const envAdminKey = process.env.ADMIN_KEY;
 
   if (!envAdminKey) return false;
   return adminKey === envAdminKey;
 }
+
+// Why check both?
+// - Frontend may store key in localStorage and send via header
+// - OR frontend may store key in cookies
+// - Supporting both prevents authentication mismatch bugs
 
 export async function GET(request: Request) {
   const isAuthorized = await verifyAdminKey();

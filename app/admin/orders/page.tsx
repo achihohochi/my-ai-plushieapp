@@ -16,11 +16,12 @@ interface Order {
   total: string
   order_status: string
   payment_status: string
+  payment_method: string
   created_at: string
   order_items: Array<{
     id: number
     quantity: number
-    price: string
+    price_at_time: string
     product: {
       name: string
       image_url: string
@@ -174,6 +175,17 @@ export default function AdminOrdersPage() {
                         >
                           Payment: {order.payment_status}
                         </span>
+                        <span
+                          className={`px-2 py-1 rounded-full text-xs font-semibold ${
+                            order.payment_method === 'stripe'
+                              ? 'bg-purple-100 text-purple-800 dark:bg-purple-900/20 dark:text-purple-200'
+                              : order.payment_method === 'venmo'
+                              ? 'bg-cyan-100 text-cyan-800 dark:bg-cyan-900/20 dark:text-cyan-200'
+                              : 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-200'
+                          }`}
+                        >
+                          {order.payment_method === 'stripe' ? '💳 Stripe' : order.payment_method === 'venmo' ? '📱 Venmo' : order.payment_method}
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -194,11 +206,11 @@ export default function AdminOrdersPage() {
                         <div className="flex-1">
                           <p className="font-medium text-foreground">{item.product.name}</p>
                           <p className="text-sm text-muted-foreground">
-                            Quantity: {item.quantity} × ${parseFloat(item.price).toFixed(2)}
+                            Quantity: {item.quantity} × ${parseFloat(item.price_at_time).toFixed(2)}
                           </p>
                         </div>
                         <div className="font-bold text-foreground">
-                          ${(parseFloat(item.price) * item.quantity).toFixed(2)}
+                          ${(parseFloat(item.price_at_time) * item.quantity).toFixed(2)}
                         </div>
                       </div>
                     ))}

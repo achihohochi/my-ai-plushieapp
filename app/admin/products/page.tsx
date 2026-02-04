@@ -60,6 +60,9 @@ export default function AdminProductsPage() {
   const handleEdit = (product: Product) => {
     setEditingId(product.id)
     setEditForm({
+      name: product.name,
+      description: product.description || '',
+      image_url: product.image_url,
       price: product.price,
       stock_quantity: product.stock_quantity,
       status: product.status,
@@ -175,6 +178,55 @@ export default function AdminProductsPage() {
                 <CardContent>
                   {isEditing ? (
                     <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label htmlFor={`name-${product.id}`}>Product Name</Label>
+                        <Input
+                          id={`name-${product.id}`}
+                          type="text"
+                          value={editForm.name || ''}
+                          onChange={(e) =>
+                            setEditForm({ ...editForm, name: e.target.value })
+                          }
+                          placeholder="Enter product name..."
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor={`description-${product.id}`}>Description</Label>
+                        <textarea
+                          id={`description-${product.id}`}
+                          className="w-full min-h-[80px] px-3 py-2 text-sm rounded-md border border-input bg-background"
+                          value={editForm.description || ''}
+                          onChange={(e) =>
+                            setEditForm({ ...editForm, description: e.target.value })
+                          }
+                          placeholder="Enter product description..."
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor={`image-${product.id}`}>Image URL</Label>
+                        <Input
+                          id={`image-${product.id}`}
+                          type="text"
+                          value={editForm.image_url}
+                          onChange={(e) =>
+                            setEditForm({ ...editForm, image_url: e.target.value })
+                          }
+                          placeholder="/path/to/image.jpg"
+                        />
+                        {editForm.image_url && (
+                          <img
+                            src={editForm.image_url}
+                            alt="Preview"
+                            className="w-20 h-20 object-cover rounded-lg mt-2"
+                            onError={(e) => {
+                              e.currentTarget.src = '/placeholder.png'
+                            }}
+                          />
+                        )}
+                      </div>
+
                       <div className="space-y-2">
                         <Label htmlFor={`price-${product.id}`}>Price ($)</Label>
                         <Input

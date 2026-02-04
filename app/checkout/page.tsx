@@ -16,6 +16,7 @@ function CheckoutForm() {
   const { items, totalPrice, totalItems, clearCart } = useCart()
   const router = useRouter()
   const [loading, setLoading] = useState(false)
+  const [paymentMethod, setPaymentMethod] = useState<'stripe' | 'venmo'>('stripe')
   const [formData, setFormData] = useState({
     email: "",
     name: "",
@@ -31,31 +32,58 @@ function CheckoutForm() {
     setLoading(true)
 
     try {
-      // Create order
-      const res = await fetch("/api/checkout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...formData,
-          items,
-          totalPrice,
-        }),
-      })
+      if (paymentMethod === 'stripe') {
+        // Create Stripe checkout session
+        const res = await fetch("/api/create-checkout-session", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...formData,
+            items,
+          }),
+        })
 
-      const data = await res.json()
+        const data = await res.json()
 
-      if (data.success) {
-        // Clear cart
-        clearCart()
-        // Redirect to confirmation
-        router.push(`/confirmation?order=${data.orderNumber}`)
-      } else {
-        alert(data.error || "Failed to place order")
-        setLoading(false)
+        if (data.success && data.url) {
+          // Redirect to Stripe Checkout
+          window.location.href = data.url
+        } else {
+          alert(data.error || "Failed to create checkout session")
+          setLoading(false)
+        }
+      } else if (paymentMethod === 'venmo') {
+        // Create Venmo order
+        const res = await fetch("/api/checkout/venmo", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...formData,
+            items,
+          }),
+        })
+
+        const data = await res.json()
+
+        if (data.success) {
+          // Clear cart if session ID provided
+          if (data.sessionId) {
+            await clearCart()
+          }
+
+          // Redirect to Venmo QR page with order data
+          const queryParams = new URLSearchParams({
+            data: encodeURIComponent(JSON.stringify(data))
+          })
+          router.push(`/checkout/venmo?${queryParams.toString()}`)
+        } else {
+          alert(data.error || "Failed to create Venmo order")
+          setLoading(false)
+        }
       }
     } catch (error) {
       console.error("Checkout error:", error)
-      alert("Failed to place order. Please try again.")
+      alert("Failed to create checkout session. Please try again.")
       setLoading(false)
     }
   }
@@ -193,18 +221,84 @@ function CheckoutForm() {
               </CardContent>
             </Card>
 
-            {/* Payment Info Note */}
+            {/* Payment Method Selection */}
             <Card className="mt-6">
               <CardContent className="p-6">
                 <h2 className="text-2xl font-bold text-foreground mb-4">
                   Payment Method
                 </h2>
-                <div className="bg-muted/50 p-4 rounded-lg">
-                  <p className="text-sm text-muted-foreground">
-                    💳 <strong>For Phase 4 Demo:</strong> Payment processing will be added with Stripe integration.
-                    For now, orders will be created without payment.
-                  </p>
+
+                <div className="space-y-3 mb-4">
+                  {/* Stripe Option */}
+                  <label
+                    className={`flex items-start gap-4 p-4 border-2 rounded-lg cursor-pointer transition-all ${
+                      paymentMethod === 'stripe'
+                        ? 'border-primary bg-primary/5'
+                        : 'border-gray-200 hover:border-gray-300'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="paymentMethod"
+                      value="stripe"
+                      checked={paymentMethod === 'stripe'}
+                      onChange={(e) => setPaymentMethod('stripe')}
+                      className="mt-1"
+                    />
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-lg font-semibold">💳 Credit/Debit Card</span>
+                      </div>
+                      <p className="text-sm text-muted-foreground">
+                        Secure payment via Stripe. All major cards accepted.
+                      </p>
+                    </div>
+                  </label>
+
+                  {/* Venmo Option */}
+                  <label
+                    className={`flex items-start gap-4 p-4 border-2 rounded-lg cursor-pointer transition-all ${
+                      paymentMethod === 'venmo'
+                        ? 'border-primary bg-primary/5'
+                        : 'border-gray-200 hover:border-gray-300'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="paymentMethod"
+                      value="venmo"
+                      checked={paymentMethod === 'venmo'}
+                      onChange={(e) => setPaymentMethod('venmo')}
+                      className="mt-1"
+                    />
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-lg font-semibold">📱 Venmo</span>
+                      </div>
+                      <p className="text-sm text-muted-foreground">
+                        Scan QR code with Venmo app. Manual verification required.
+                      </p>
+                    </div>
+                  </label>
                 </div>
+
+                {/* Payment Method Info */}
+                {paymentMethod === 'stripe' && (
+                  <div className="bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800 p-4 rounded-lg">
+                    <p className="text-sm text-blue-900 dark:text-blue-100">
+                      <strong>Secure Payment:</strong> You'll be redirected to Stripe's secure checkout to complete your payment.
+                    </p>
+                  </div>
+                )}
+
+                {paymentMethod === 'venmo' && (
+                  <div className="bg-purple-50 dark:bg-purple-950 border border-purple-200 dark:border-purple-800 p-4 rounded-lg">
+                    <p className="text-sm text-purple-900 dark:text-purple-100">
+                      <strong>Venmo Payment:</strong> You'll receive a QR code to scan with your Venmo app.
+                      Your order will be verified within 1-2 hours.
+                    </p>
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>
@@ -261,7 +355,13 @@ function CheckoutForm() {
                   className="w-full font-bold text-lg py-6"
                   disabled={loading}
                 >
-                  {loading ? "Placing Order..." : "Place Order"}
+                  {loading
+                    ? paymentMethod === 'stripe'
+                      ? "Redirecting to Stripe..."
+                      : "Creating Venmo order..."
+                    : paymentMethod === 'stripe'
+                    ? "Continue to Payment"
+                    : "Get Venmo QR Code"}
                 </Button>
 
                 <Link href="/cart">

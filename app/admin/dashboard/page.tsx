@@ -13,6 +13,7 @@ import {
   Download,
   Upload,
   LogOut,
+  Smartphone,
 } from 'lucide-react'
 import Link from 'next/link'
 
@@ -23,6 +24,7 @@ export default function AdminDashboardPage() {
     totalOrders: 0,
     totalProducts: 0,
     totalRevenue: 0,
+    pendingVenmo: 0,
   })
   const [syncing, setSyncing] = useState(false)
   const [exporting, setExporting] = useState(false)
@@ -52,6 +54,10 @@ export default function AdminDashboardPage() {
       const productsRes = await fetch('/api/products')
       const productsData = await productsRes.json()
 
+      // Fetch pending Venmo count
+      const venmoRes = await fetch('/api/admin/venmo/pending')
+      const venmoData = await venmoRes.json()
+
       if (ordersData.success) {
         const revenue = ordersData.data.reduce(
           (sum: number, order: any) => sum + parseFloat(order.total),
@@ -61,6 +67,7 @@ export default function AdminDashboardPage() {
           totalOrders: ordersData.count,
           totalProducts: productsData.count,
           totalRevenue: revenue,
+          pendingVenmo: venmoData.success ? venmoData.orders.length : 0,
         })
       }
     } catch (error) {
@@ -238,7 +245,7 @@ export default function AdminDashboardPage() {
         </Card>
 
         {/* Quick Actions */}
-        <div className="grid md:grid-cols-2 gap-6">
+        <div className="grid md:grid-cols-3 gap-6">
           <Link href="/admin/orders">
             <Card className="hover:shadow-lg transition-shadow cursor-pointer">
               <CardHeader>
@@ -259,6 +266,29 @@ export default function AdminDashboardPage() {
                   <CardTitle>Manage Products</CardTitle>
                 </div>
                 <CardDescription>Update product prices and inventory</CardDescription>
+              </CardHeader>
+            </Card>
+          </Link>
+
+          <Link href="/admin/venmo">
+            <Card className="hover:shadow-lg transition-shadow cursor-pointer relative">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Smartphone className="h-5 w-5 text-primary" />
+                    <CardTitle>Venmo Payments</CardTitle>
+                  </div>
+                  {stats.pendingVenmo > 0 && (
+                    <div className="bg-red-500 text-white text-xs font-bold rounded-full h-6 w-6 flex items-center justify-center">
+                      {stats.pendingVenmo}
+                    </div>
+                  )}
+                </div>
+                <CardDescription>
+                  {stats.pendingVenmo > 0
+                    ? `${stats.pendingVenmo} payment${stats.pendingVenmo > 1 ? 's' : ''} awaiting verification`
+                    : 'Verify Venmo payments'}
+                </CardDescription>
               </CardHeader>
             </Card>
           </Link>

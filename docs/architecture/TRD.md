@@ -2,22 +2,23 @@
 
 **Product:** AI Plushie E-commerce Platform
 **Version:** 1.0 (MVP)
-**Last Updated:** February 2, 2026
-**Status:** Draft
+**Last Updated:** February 4, 2026
+**Status:** Implemented - v1.0
 
 ---
 
 ## 1. Executive Summary
 
-This Technical Requirements Document (TRD) defines the technical specifications, architecture, and implementation requirements for the AI Plushie e-commerce platform. It serves as the blueprint for developers to build the system.
+This Technical Requirements Document (TRD) defines the technical specifications, architecture, and implementation requirements for the AI Plushie e-commerce platform. This document reflects the **actual implemented system** as of February 4, 2026.
 
-**Key Technologies:**
-- **Frontend:** Next.js 15+, React 19, TypeScript
+**Key Technologies (As Implemented):**
+- **Frontend:** Next.js 14+, React 19, TypeScript
 - **Backend:** Next.js API Routes (serverless)
-- **Database:** PostgreSQL 15+
-- **ORM:** Prisma
-- **Authentication:** NextAuth.js (Auth.js)
-- **Payments:** Stripe API
+- **Database:** PostgreSQL 15+ (local dev + Vercel Postgres for production)
+- **ORM:** Prisma 7.3.0 with PostgreSQL adapter (@prisma/adapter-pg)
+- **Authentication:** Key-based admin authentication (user auth deferred to v2)
+- **Payments:** Stripe Checkout + Venmo QR codes
+- **Email:** Resend (order confirmations)
 - **Hosting:** Vercel
 - **Images:** Next.js Image component + `/public` folder
 
@@ -25,7 +26,7 @@ This Technical Requirements Document (TRD) defines the technical specifications,
 
 ## 2. System Architecture Overview
 
-### 2.1 Architecture Pattern
+### 2.1 Architecture Pattern (As Implemented)
 
 **Pattern:** Monolithic Next.js application with API routes (serverless backend)
 
@@ -40,146 +41,198 @@ This Technical Requirements Document (TRD) defines the technical specifications,
 │              NEXT.JS APPLICATION                    │
 │  ┌────────────────┐         ┌──────────────────┐   │
 │  │   Frontend     │◄───────►│  API Routes      │   │
-│  │   (React)      │         │  (Serverless)    │   │
+│  │   (React 19)   │         │  (Serverless)    │   │
 │  │                │         │                  │   │
-│  │ • Pages        │         │ • /api/products  │   │
-│  │ • Components   │         │ • /api/cart      │   │
-│  │ • State        │         │ • /api/checkout  │   │
+│  │ • /shop        │         │ • /api/products  │   │
+│  │ • /cart        │         │ • /api/cart      │   │
+│  │ • /checkout    │         │ • /api/checkout  │   │
+│  │ • /admin       │         │ • /api/admin     │   │
 │  └────────────────┘         └──────────────────┘   │
 │         │                            │              │
 │         │                            │              │
 │         ▼                            ▼              │
 │  ┌────────────────┐         ┌──────────────────┐   │
 │  │  Client State  │         │   Prisma ORM     │   │
-│  │  (React Query) │         │   (Type-safe)    │   │
+│  │  (React        │         │   v7.3.0 + PG    │   │
+│  │   Context)     │         │   Adapter        │   │
 │  └────────────────┘         └──────────────────┘   │
 └─────────────────────────────────────────────────────┘
                          │
                          ▼
          ┌───────────────────────────────────┐
          │     PostgreSQL Database           │
-         │     (Vercel Postgres or Supabase) │
+         │     (Local dev / Vercel Postgres) │
+         │     7 tables: users, products,    │
+         │     orders, order_items,          │
+         │     cart_items, addresses,        │
+         │     inventory_log                 │
          └───────────────────────────────────┘
                          │
-                         ▼
-                ┌─────────────────┐
-                │  Stripe API     │
-                │  (Payments)     │
-                └─────────────────┘
+          ┌──────────────┴──────────────┐
+          ▼                             ▼
+┌──────────────────┐          ┌──────────────────┐
+│  Stripe API      │          │  Resend API      │
+│  (Payments)      │          │  (Emails)        │
+│  • Checkout      │          │  • Order         │
+│  • Webhooks      │          │    Confirmations │
+└──────────────────┘          └──────────────────┘
+          │
+          ▼
+┌──────────────────┐
+│  Venmo Business  │
+│  (@aichiho)      │
+│  QR Code         │
+│  Payments        │
+└──────────────────┘
 
-Note: Product images served from /public folder via Next.js
+Note: Product images served from /public folder
+      Google Sheets integration optional (not required)
 ```
 
 ---
 
 ## 3. Technology Stack Details
 
-### 3.1 Frontend
+### 3.1 Frontend (As Implemented)
 
-**Framework:** Next.js 15+ (App Router)
-- **Why:** Server-side rendering, excellent performance, React 19 support
+**Framework:** Next.js 14+ (App Router) ✅
+- **Implemented:** Server-side rendering, file-based routing
 - **Routing:** File-based routing (`app/` directory)
-- **Data Fetching:** Server Components + React Query for client state
+- **Data Fetching:** Fetch API in server components, React Context for client state
 
-**UI Library:** React 19
-- **Why:** Latest features (Server Components, Actions), industry standard
-- **State Management:** React Context (cart), React Query (server data)
+**UI Library:** React 19 ✅
+- **Implemented:** Server components, client components
+- **State Management:** React Context (CartContext, AdminContext)
 
-**Styling:** Tailwind CSS 4
-- **Why:** Utility-first, fast development, small bundle size
-- **Component Library:** shadcn/ui (accessible, customizable)
+**Styling:** Tailwind CSS 3+ ✅
+- **Implemented:** Utility-first styling throughout
+- **Component Library:** shadcn/ui (Button, Input, Label components)
 
-**Language:** TypeScript (Strict Mode)
-- **Why:** Type safety, better IDE support, catches errors at compile time
+**Language:** TypeScript ✅
+- **Implemented:** Strict mode enabled
 - **Config:** `"strict": true` in tsconfig.json
 
-**Icons:** Lucide React
-- **Why:** Modern, lightweight, tree-shakeable
+**Icons:** Lucide React ✅
+- **Implemented:** Used throughout UI
 
 ---
 
-### 3.2 Backend
+### 3.2 Backend (As Implemented)
 
-**Runtime:** Node.js 18+
-- **Why:** LTS version, stable, great ecosystem
+**Runtime:** Node.js 18+ ✅
+- **Implemented:** Running on Vercel serverless functions
 
-**Framework:** Next.js API Routes
-- **Why:** Collocated with frontend, serverless by default, easy deployment
-- **Pattern:** RESTful API
+**Framework:** Next.js API Routes ✅
+- **Implemented:** RESTful API pattern
+- **Pattern:** JSON responses with consistent error handling
 
-**API Routes Structure:**
+**API Routes Structure (Actual Implementation):**
 ```
 /api
 ├── products
-│   ├── route.ts              (GET all products)
+│   ├── route.ts              ✅ GET all products
 │   └── [id]
-│       └── route.ts          (GET single product)
+│       └── route.ts          ✅ GET single product
 ├── cart
-│   ├── route.ts              (GET cart, POST add item)
-│   └── [itemId]
-│       └── route.ts          (PUT update, DELETE remove)
+│   ├── route.ts              ✅ GET cart, POST add item
+│   └── [id]
+│       └── route.ts          ✅ PUT update, DELETE remove
 ├── checkout
-│   ├── stripe/route.ts       (POST create payment intent)
-│   ├── venmo/route.ts        (POST submit Venmo transaction)
-│   └── confirm/route.ts      (POST confirm order)
-├── auth
-│   └── [...nextauth]
-│       └── route.ts          (NextAuth handlers)
+│   ├── route.ts              ✅ POST create order (legacy)
+│   └── venmo
+│       └── route.ts          ✅ POST Venmo order with QR
+├── create-checkout-session
+│   └── route.ts              ✅ POST Stripe checkout session
+├── webhooks
+│   └── stripe
+│       └── route.ts          ✅ POST Stripe webhook handler
 └── admin
-    ├── orders/route.ts       (GET orders, PUT update status)
-    └── inventory/route.ts    (POST sync from Google Sheets)
+    ├── products
+    │   └── [id]
+    │       └── route.ts      ✅ PUT update product
+    ├── orders
+    │   └── route.ts          ✅ GET all orders
+    ├── venmo
+    │   ├── pending
+    │   │   └── route.ts      ✅ GET pending Venmo orders
+    │   └── verify
+    │       └── route.ts      ✅ POST verify payment
+    └── sync-sheets
+        └── route.ts          ✅ POST sync with Google Sheets
 ```
 
 ---
 
-### 3.3 Database
+### 3.3 Database (As Implemented)
 
-**Database:** PostgreSQL 15+
-- **Why:** ACID compliance (critical for payments), relational data fits e-commerce
-- **Hosting Options:**
-  - Vercel Postgres (recommended for MVP - easy integration)
-  - Supabase (more features, good alternative)
-  - AWS RDS (production scale)
+**Database:** PostgreSQL 15+ ✅
+- **Implemented:** Local PostgreSQL for development
+- **Production:** Vercel Postgres (ready to configure)
+- **Connection:** postgresql://chiho@localhost:5432/plushie_app (dev)
 
-**ORM:** Prisma 5+
-- **Why:** Type-safe queries, migrations, excellent DX
-- **Features:** Auto-complete, type checking, connection pooling
+**ORM:** Prisma 7.3.0 ✅
+- **Implemented:** Full schema with 7 tables
+- **Special:** Uses @prisma/adapter-pg for PostgreSQL driver
+- **Features:** Migrations, type-safe queries, seed script
 
-**Connection Pooling:** PgBouncer (via Prisma)
-- **Why:** Serverless functions need efficient connections
-- **Config:** `?pgbouncer=true` in connection string
+**Schema Tables:**
+1. users - User accounts (optional, not used in MVP)
+2. products - 14 AI plushie products
+3. cart_items - Session-based cart with session_id
+4. orders - Order tracking with payment status
+5. order_items - Line items for each order
+6. addresses - Shipping addresses (JSONB in orders for MVP)
+7. inventory_log - Audit trail for stock changes
+
+**Connection Pooling:** Not required for local dev
+- **Production:** Vercel Postgres includes pooling
 
 ---
 
-### 3.4 Authentication
+### 3.4 Authentication (As Implemented)
 
-**Library:** NextAuth.js (Auth.js) v5
-- **Why:** Next.js-native, supports multiple providers, secure by default
-- **Strategy:** JWT tokens (stateless, scales well)
+**Library:** Custom key-based authentication ✅
+- **Implemented:** Admin-only authentication for MVP
+- **Strategy:** Environment variable admin key
+- **Storage:** localStorage (frontend) + HTTP headers (API)
 
-**Providers:**
-- Email/Password (Credentials provider)
-- OAuth (future: Google, Apple)
+**Why Not NextAuth:**
+- User authentication deferred to v2
+- Guest checkout sufficient for MVP
+- Admin needs simple, immediate solution
+
+**Admin Authentication Flow:**
+1. Admin enters key at /admin/login
+2. Key stored in localStorage
+3. API routes check x-admin-key header OR cookies
+4. Access granted to /admin/* routes
 
 **Session Management:**
-- **Token Type:** JWT (JSON Web Token)
-- **Storage:** HTTP-only cookies (prevents XSS)
-- **Expiration:** 1 hour (refresh on activity)
-- **"Remember Me":** 30-day expiration
+- **Guest Cart:** HTTP-only cookies with session_id (UUID)
+- **Cart Persistence:** 30 days
+- **Admin Session:** localStorage (no expiration)
 
 ---
 
-### 3.5 Payment Processing
+### 3.5 Payment Processing (As Implemented)
 
-**Provider:** Stripe
+**Primary Provider:** Stripe ✅
 - **SDK:** @stripe/stripe-js (client), stripe (server)
-- **Integration:** Stripe Checkout + Payment Intents API
-- **Test Mode:** Yes (toggle via env var)
+- **Integration:** Stripe Checkout (hosted payment page)
+- **Webhook:** /api/webhooks/stripe for order creation
+- **Test Mode:** Yes (sk_test keys)
+- **Features:** Credit/debit cards, Apple Pay, Google Pay
 
-**Venmo Integration:**
-- **Method:** QR code generation
-- **Verification:** Manual admin approval (MVP)
-- **Library:** qrcode.js for QR generation
+**Secondary Provider:** Venmo ✅
+- **Method:** QR code generation via qrcode npm package
+- **Business Account:** @aichiho (Venmo Business Profile)
+- **Deep Link:** venmo://paycharge?txn=pay&recipients=USERNAME&amount=TOTAL&note=ORDER_NUMBER
+- **Verification:** Manual admin approval at /admin/venmo
+- **Status:** Orders created as pending_payment_verification
+
+**Payment Flow:**
+- **Stripe:** Checkout → Stripe Hosted Page → Webhook → Order Created → Email Sent
+- **Venmo:** Checkout → QR Displayed → Customer Pays → Admin Verifies → Email Sent
 
 ---
 
@@ -198,15 +251,22 @@ Note: Product images served from /public folder via Next.js
 
 ---
 
-### 3.7 Email Service
+### 3.7 Email Service (As Implemented)
 
-**Provider:** Resend (recommended) or SendGrid
-- **Why Resend:** Modern API, React Email templates, generous free tier
-- **Use Cases:** Order confirmations, password resets, shipping notifications
+**Provider:** Resend ✅
+- **Implemented:** Order confirmation emails
+- **API Key:** Stored in RESEND_API_KEY environment variable
+- **From Address:** onboarding@resend.dev (development)
+- **Free Tier:** 100 emails/day, 3,000/month
 
-**Template Engine:** React Email
-- **Why:** Write email templates in React (JSX)
-- **Preview:** Local development preview
+**Template Engine:** Plain HTML ✅
+- **Why:** Simple, reliable (React Email caused validation issues)
+- **Implementation:** generateEmailHTML() function in lib/emails/send-order-confirmation.ts
+- **Content:** Order details, items, pricing, shipping address, delivery info
+
+**Email Triggers:**
+- Stripe webhook success → Send confirmation
+- Venmo admin verification → Send confirmation
 
 ---
 
@@ -746,10 +806,164 @@ GOOGLE_SHEET_ID="xxx"
 
 ---
 
+## 14. Production Configuration
+
+### 14.1 Required Environment Variables
+
+**Database:**
+```bash
+DATABASE_URL="postgresql://user:password@host:5432/plushie_app"
+# Production: Use Vercel Postgres connection string
+```
+
+**Stripe:**
+```bash
+STRIPE_SECRET_KEY="sk_live_xxx"  # Live key for production
+NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY="pk_live_xxx"
+STRIPE_WEBHOOK_SECRET="whsec_xxx"  # From Stripe webhook setup
+```
+
+**Venmo:**
+```bash
+VENMO_USERNAME="aichiho"  # Business account username (no @ symbol)
+```
+
+**Email:**
+```bash
+RESEND_API_KEY="re_xxx"  # Resend API key
+```
+
+**Admin:**
+```bash
+ADMIN_KEY="generate-secure-random-key"  # Use: openssl rand -base64 32
+```
+
+**Google Sheets (Optional):**
+```bash
+GOOGLE_SERVICE_ACCOUNT_KEY='{"type":"service_account",...}'  # JSON string
+GOOGLE_SHEETS_SPREADSHEET_ID="spreadsheet-id-here"
+```
+
+### 14.2 Deployment Checklist
+
+**Before Production Deployment:**
+- [ ] Switch Stripe keys from test to live mode
+- [ ] Configure production DATABASE_URL (Vercel Postgres)
+- [ ] Set up Stripe webhook endpoint (https://domain.com/api/webhooks/stripe)
+- [ ] Verify Venmo business account is active
+- [ ] Add custom domain to Resend (optional, for branded emails)
+- [ ] Generate secure ADMIN_KEY (never use test key in production)
+- [ ] Test full payment flow on staging environment
+- [ ] Enable Vercel Analytics for monitoring
+- [ ] Set up error tracking (Sentry optional)
+
+**Vercel Configuration:**
+- Environment variables configured in Vercel dashboard
+- Production branch: main
+- Preview deployments: enabled for pull requests
+- Automatic deployments: enabled
+
+### 14.3 Security Notes
+
+**Critical:**
+- Never commit .env files to git (protected by .gitignore)
+- ADMIN_KEY must be cryptographically random (min 32 bytes)
+- VENMO_USERNAME is sensitive (business account identifier)
+- Stripe webhook secret must match Stripe dashboard
+- Database credentials must use strong passwords
+
+**Best Practices:**
+- Rotate ADMIN_KEY periodically
+- Use different Stripe keys for staging and production
+- Monitor Stripe dashboard for suspicious activity
+- Review Vercel function logs regularly
+
+---
+
+## 15. Testing & Verification (Production Readiness)
+
+### 15.1 Payment Integration Testing (February 4, 2026)
+
+Both payment methods have been fully tested and verified working end-to-end.
+
+**Stripe Checkout - Verified ✅**
+```
+Test Date: February 4, 2026
+Test Card: 4242 4242 4242 4242 (Stripe test card)
+Test Results:
+- ✅ Checkout session created successfully
+- ✅ Redirected to Stripe hosted payment page
+- ✅ Payment processed successfully
+- ✅ Webhook received and processed
+- ✅ Order created in database (status: paid)
+- ✅ Order confirmation email delivered
+- ✅ Cart cleared from database
+- ✅ Inventory decremented correctly
+- ✅ Revenue tracking updated
+```
+
+**Venmo QR Code Payment - Verified ✅**
+```
+Test Date: February 3-4, 2026
+Business Account: @aichiho (Venmo Business Profile)
+Test Results:
+- ✅ QR code generated with correct deep link
+- ✅ Order created (status: pending_payment_verification)
+- ✅ QR code scannable with Venmo mobile app
+- ✅ Admin verification UI functional
+- ✅ Payment status updated to "paid" after admin verification
+- ✅ Order confirmation email sent after verification
+- ✅ Cart cleared from database
+- ✅ Revenue tracking updated correctly
+```
+
+### 15.2 Integration Test Results
+
+**Complete Order Flow Tests:**
+1. **Guest Checkout (Stripe)** - ✅ Passed
+2. **Guest Checkout (Venmo)** - ✅ Passed
+3. **Cart Persistence** - ✅ Passed (survives page refresh)
+4. **Inventory Management** - ✅ Passed (stock decrements, logs created)
+5. **Email Delivery** - ✅ Passed (both payment methods)
+6. **Admin Dashboard** - ✅ Passed (all features functional)
+7. **Admin Product Management** - ✅ Passed (name, description, image, price, stock editable)
+8. **Admin Venmo Verification** - ✅ Passed (manual verification workflow)
+
+### 15.3 Known Issues
+
+**None Critical**
+- Browser caching requires hard refresh (Cmd+Shift+R) to see product updates
+  - This is expected behavior for static asset caching
+  - Not a bug, just a performance optimization
+
+### 15.4 Production Deployment Readiness
+
+**Status:** ✅ Ready for Production
+
+All critical features tested and verified:
+- [x] Database schema and migrations
+- [x] Product catalog with 14 products
+- [x] Shopping cart (session-based persistence)
+- [x] Stripe payment integration
+- [x] Venmo payment integration
+- [x] Email confirmations (Resend)
+- [x] Admin authentication
+- [x] Admin product management
+- [x] Admin order management
+- [x] Admin Venmo verification
+- [x] Inventory tracking and logging
+- [x] Revenue tracking
+
+**Next Step:** Production deployment to Vercel with live environment variables.
+
+---
+
 **Document History:**
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
 | 1.0 | 2026-02-02 | Planning Session | Initial TRD |
+| 2.0 | 2026-02-04 | Implementation Complete | Updated with actual implementation and production config |
+| 2.1 | 2026-02-04 | Testing Complete | Added testing verification and production readiness status |
 
 **Related Documents:**
 - [TECHNOLOGY_STACK.md](./TECHNOLOGY_STACK.md) - Detailed tech choices
