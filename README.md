@@ -1,219 +1,489 @@
-# 🧸 Cuddle Corner - Plushie E-Commerce Site
+# 🧸 AI Plushie E-commerce App
 
-A beautiful, modern e-commerce website for adorable kawaii plushies. Built with Next.js, React, and Tailwind CSS, featuring a delightful shopping experience with a fully functional cart system.
+A fully-functional e-commerce platform for AI-themed plushies, built with Next.js, TypeScript, PostgreSQL, and Stripe. Features include product catalog, shopping cart with persistence, secure checkout with Stripe payments, admin dashboard, and Google Sheets integration.
+
+**Live Demo:** [https://my-ai-plushieapp.vercel.app/](https://my-ai-plushieapp.vercel.app/)
+
+---
 
 ## ✨ Features
 
-- 🎨 Beautiful, modern UI with pastel kawaii aesthetics
-- 🛒 Shopping cart with sidebar
-- 💖 Favorite/wishlist functionality
-- 🎯 Product grid with categories
-- 🌟 Featured products section
-- 📱 Fully responsive design
-- ⚡ Fast performance with Next.js optimization
+### Customer Features
+- 🛍️ **Product Catalog** - Browse 14 adorable AI-themed plushies
+- 🛒 **Persistent Shopping Cart** - Cart saved to database, survives page refreshes
+- 💳 **Stripe Payments** - Secure checkout with credit/debit cards
+- 📦 **Guest Checkout** - No account required to make purchases
+- 📱 **Mobile-Friendly** - Optimized for teenagers on mobile devices
+- 🎨 **Dark Mode** - Toggle between light and dark themes
+
+### Admin Features
+- 📊 **Admin Dashboard** - View stats, revenue, and order counts
+- 📝 **Order Management** - View all orders with full details
+- 💰 **Product Management** - Edit prices, stock levels, and status
+- 📄 **Google Sheets Sync** - Optional bulk import/export via Google Sheets
+- 🔐 **Secure Access** - Key-based authentication for admin
+
+### Technical Features
+- ⚡ **Next.js 16 App Router** - Modern React framework with server components
+- 🗄️ **PostgreSQL Database** - Robust relational database with Prisma ORM
+- 💳 **Stripe Integration** - PCI-compliant payment processing
+- 🔒 **Secure Sessions** - HTTP-only cookies for guest cart management
+- 📦 **Inventory Tracking** - Real-time stock updates with audit logging
+- 🌐 **API Routes** - RESTful backend API for all operations
+
+---
 
 ## 🚀 Quick Start
 
 ### Prerequisites
 
-Make sure you have the following installed on your system:
+- **Node.js** 18+ ([Download](https://nodejs.org/))
+- **PostgreSQL** ([Download](https://www.postgresql.org/download/) or use [Postgres.app](https://postgresapp.com/) for macOS)
+- **Stripe Account** (free test account: [https://dashboard.stripe.com/register](https://dashboard.stripe.com/register))
 
-- **Node.js** (version 18 or higher)
-- **npm** or **yarn** or **pnpm** (package manager)
-
-To check if you have Node.js installed:
+Check installations:
 ```bash
-node --version
-npm --version
+node --version  # Should be v18+
+psql --version  # Should be 12+
 ```
 
 ### Installation
 
-1. **Navigate to the project directory:**
+1. **Clone and install dependencies:**
    ```bash
    cd my-ai-plushieapp
-   ```
-
-2. **Install dependencies:**
-   ```bash
    npm install
    ```
-   
-   Or if you prefer using yarn or pnpm:
+
+2. **Create PostgreSQL database:**
    ```bash
-   yarn install
-   # or
-   pnpm install
+   # Start PostgreSQL (if not running)
+   # macOS with Postgres.app: Just open the app
+   # macOS with Homebrew: brew services start postgresql
+   # Linux: sudo systemctl start postgresql
+
+   # Create database
+   createdb plushie_app
+
+   # Verify
+   psql -l | grep plushie_app
    ```
 
-### Running the Development Server
+3. **Set up environment variables:**
+   ```bash
+   # Copy example environment file
+   cp .env.example .env
 
-Start the development server:
+   # Edit .env and add your values
+   # At minimum, update:
+   # - DATABASE_URL (your PostgreSQL connection)
+   # - STRIPE_SECRET_KEY (from Stripe dashboard)
+   # - NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY (from Stripe dashboard)
+   ```
 
-```bash
-npm run dev
-```
+4. **Run database migrations and seed:**
+   ```bash
+   npx prisma generate
+   npx prisma db push
+   npx prisma db seed
+   ```
 
-Or with yarn/pnpm:
-```bash
-yarn dev
-# or
-pnpm dev
-```
+5. **Set up Stripe webhooks (separate terminal):**
+   ```bash
+   # Install Stripe CLI (if not installed)
+   brew install stripe/stripe-cli/stripe  # macOS
+   # OR visit: https://stripe.com/docs/stripe-cli
 
-The app will be available at **[http://localhost:3000](http://localhost:3000)**
+   # Login to Stripe
+   stripe login
 
-Open your browser and navigate to that URL to see your plushie shop! 🎉
+   # Start webhook forwarding
+   stripe listen --forward-to localhost:3002/api/webhooks/stripe
 
-### Building for Production
+   # Copy the webhook secret (whsec_...) to .env
+   ```
 
-To create an optimized production build:
+6. **Start development server:**
+   ```bash
+   npm run dev -- --port 3002
+   ```
 
-```bash
-npm run build
-```
+7. **Visit the app:**
+   - **Shop:** http://localhost:3002/shop
+   - **Cart:** http://localhost:3002/cart
+   - **Admin:** http://localhost:3002/admin/login
 
-To start the production server locally:
+---
 
-```bash
-npm run start
-```
+## 📖 Detailed Setup Guides
 
-### Linting
+- **Stripe Integration:** See [docs/STRIPE_SETUP.md](docs/STRIPE_SETUP.md)
+- **Google Sheets (Optional):** See [docs/GOOGLE_SHEETS_SETUP.md](docs/GOOGLE_SHEETS_SETUP.md)
+- **Project Documentation:** See [docs/00_PROJECT_INDEX.md](docs/00_PROJECT_INDEX.md)
 
-To check for code issues:
+---
 
-```bash
-npm run lint
-```
+## 🧪 Testing
+
+### Test the Shopping Flow
+
+1. **Browse products:** http://localhost:3002/shop
+2. **Add to cart:** Click "Add to Cart" on any plushie
+3. **View cart:** Click cart icon in header
+4. **Checkout:** Click "Proceed to Checkout"
+5. **Fill shipping info:**
+   - Email: test@example.com
+   - Name: Test User
+   - Address: 123 Main St, San Francisco, CA, 94102
+6. **Pay with Stripe test card:**
+   - Card: `4242 4242 4242 4242`
+   - Expiration: Any future date (12/25)
+   - CVC: Any 3 digits (123)
+   - ZIP: Any 5 digits (12345)
+7. **Verify order created:**
+   ```bash
+   psql -U chiho -d plushie_app -c "SELECT * FROM orders ORDER BY created_at DESC LIMIT 1;"
+   ```
+
+### Test Admin Dashboard
+
+1. **Login:** http://localhost:3002/admin/login
+2. **Enter admin key:** (default: `change-this-to-a-secure-random-key`)
+3. **View dashboard:** See revenue, order count, product count
+4. **Manage orders:** View all orders with details
+5. **Edit products:** Update prices, stock levels
+
+---
 
 ## 📁 Project Structure
 
 ```
 my-ai-plushieapp/
-├── app/                    # Next.js app directory
-│   ├── layout.tsx         # Root layout with metadata
-│   ├── page.tsx           # Home page
-│   └── globals.css        # Global styles
-├── components/            # React components
-│   ├── cart-context.tsx   # Shopping cart state management
-│   ├── cart-sidebar.tsx   # Cart sidebar component
-│   ├── featured-section.tsx
-│   ├── footer.tsx
-│   ├── header.tsx
-│   ├── hero-section.tsx
-│   ├── product-card.tsx
-│   ├── product-grid.tsx
-│   └── ui/                # Reusable UI components
-├── public/                # Static assets
-│   └── *.jpg             # Plushie images
-├── scripts/               # Utility scripts
-│   └── generate-images.js # Script to regenerate placeholder images
-└── package.json          # Project dependencies
+├── app/
+│   ├── api/                      # Backend API routes
+│   │   ├── products/             # GET /api/products, /api/products/[id]
+│   │   ├── cart/                 # Cart CRUD (add, get, update, delete)
+│   │   ├── checkout/             # POST /api/checkout (legacy)
+│   │   ├── create-checkout-session/ # Stripe checkout session
+│   │   ├── webhooks/stripe/      # Stripe webhook handler
+│   │   └── admin/                # Admin API routes (protected)
+│   ├── shop/                     # Product listing page
+│   ├── products/[id]/            # Product detail pages
+│   ├── cart/                     # Shopping cart page
+│   ├── checkout/                 # Checkout flow
+│   │   ├── success/              # Payment success page
+│   │   └── cancel/               # Payment cancelled page
+│   └── admin/                    # Admin dashboard
+│       ├── login/                # Admin login
+│       ├── dashboard/            # Admin overview
+│       ├── orders/               # Order management
+│       └── products/             # Product management
+├── components/
+│   ├── ui/                       # shadcn/ui components
+│   ├── cart-context.tsx          # Shopping cart state
+│   ├── admin-context.tsx         # Admin auth state
+│   └── *.tsx                     # Feature components
+├── lib/
+│   ├── prisma.ts                 # Database client
+│   ├── stripe.ts                 # Stripe client
+│   ├── google-sheets.ts          # Google Sheets API (optional)
+│   └── utils.ts                  # Utility functions
+├── prisma/
+│   ├── schema.prisma             # Database schema (7 tables)
+│   └── seed.ts                   # Seed data (14 products)
+├── docs/                         # Comprehensive documentation
+│   ├── 00_PROJECT_INDEX.md       # Documentation index
+│   ├── SESSION_NOTES.md          # Development progress
+│   ├── DECISIONS.md              # Architectural decisions
+│   ├── STRIPE_SETUP.md           # Stripe integration guide
+│   └── GOOGLE_SHEETS_SETUP.md    # Google Sheets guide
+├── .env                          # Environment variables (not committed)
+├── .env.example                  # Environment template
+├── CLAUDE.md                     # AI development guide
+└── SKILLS.md                     # Reusable code patterns
 ```
 
-## 🛠️ Technologies Used
+---
 
-- **Framework:** Next.js 16
-- **Language:** TypeScript
-- **UI Library:** React 19
+## 🛠️ Tech Stack
+
+### Frontend
+- **Framework:** Next.js 16.0.7 (App Router)
+- **Language:** TypeScript 5
+- **UI Library:** React 19.2.0
 - **Styling:** Tailwind CSS 4
-- **UI Components:** Radix UI
+- **Components:** shadcn/ui + Radix UI
 - **Icons:** Lucide React
-- **Image Optimization:** Sharp (via Next.js)
-- **Fonts:** Nunito (Google Fonts)
+- **State:** React Context API
+
+### Backend
+- **Runtime:** Node.js (Next.js API routes)
+- **Database:** PostgreSQL
+- **ORM:** Prisma 7.3.0 with @prisma/adapter-pg
+- **Payments:** Stripe
+- **Sessions:** HTTP-only cookies
+- **Validation:** Zod
+
+### Infrastructure
+- **Hosting:** Vercel
+- **Database:** Local PostgreSQL (can deploy to Vercel Postgres)
+- **CDN:** Vercel Edge Network
 - **Analytics:** Vercel Analytics
 
-## 🎨 Customization
+---
 
-### Adding/Replacing Product Images
+## 🗄️ Database Schema
 
-All plushie images are stored in the `public/` directory. To replace placeholder images:
+7 tables with full referential integrity:
 
-1. Add your image files to the `public/` folder
-2. Use the exact filenames referenced in `components/product-grid.tsx` and `components/featured-section.tsx`
+- **products** - Product catalog (id, name, description, price, stock, image, category)
+- **cart_items** - Guest cart items (session_id, product_id, quantity)
+- **orders** - Customer orders (order_number, email, shipping address, payment info)
+- **order_items** - Order line items (order_id, product_id, quantity, price_at_time)
+- **addresses** - Shipping addresses (future use)
+- **users** - User accounts (future use)
+- **inventory_log** - Stock change audit trail
 
-If you need to regenerate placeholder images, you can run:
+See `prisma/schema.prisma` for full schema.
 
-```bash
-node scripts/generate-images.js
-```
+---
 
-### Modifying Products
+## 🔐 Security Features
 
-Edit the products array in `components/product-grid.tsx` to add, remove, or modify products.
+- ✅ **PCI-DSS Compliant** - No card data stored (Stripe handles all payment data)
+- ✅ **Environment Variables** - All secrets in .env (never committed)
+- ✅ **HTTP-only Cookies** - Session cookies inaccessible to JavaScript
+- ✅ **Input Validation** - Server-side validation on all inputs
+- ✅ **SQL Injection Protection** - Parameterized queries via Prisma
+- ✅ **Webhook Signature Verification** - Stripe webhooks verified
+- ✅ **Admin Key Authentication** - Protected admin routes
 
-### Changing Colors/Themes
+---
 
-The color scheme is defined in `app/globals.css` using CSS custom properties. Modify the color values there to change the theme.
+## 📊 API Routes
+
+### Public Endpoints
+- `GET /api/products` - List all products
+- `GET /api/products/[id]` - Get single product
+- `POST /api/cart` - Add item to cart
+- `GET /api/cart` - Get cart items
+- `PUT /api/cart/[id]` - Update cart item quantity
+- `DELETE /api/cart/[id]` - Remove cart item
+- `POST /api/create-checkout-session` - Create Stripe checkout
+- `POST /api/webhooks/stripe` - Stripe webhook handler
+
+### Admin Endpoints (require x-admin-key header)
+- `POST /api/admin/sync-sheets` - Import/export Google Sheets
+- `GET /api/admin/orders` - List all orders
+- `POST /api/admin/orders` - Export orders to Sheets
+- `PUT /api/admin/products/[id]` - Update product
+
+---
 
 ## 🌐 Deployment
 
 ### Deploy to Vercel (Recommended)
 
-The easiest way to deploy is using Vercel:
+1. **Push code to GitHub**
+   ```bash
+   git add .
+   git commit -m "Ready for deployment"
+   git push origin main
+   ```
 
-#### Method 1: Deploy via Vercel Dashboard
+2. **Import to Vercel**
+   - Visit [vercel.com/new](https://vercel.com/new)
+   - Import your GitHub repository
+   - Vercel auto-detects Next.js
 
-1. Push your code to GitHub (or GitLab/Bitbucket)
-2. Import your repository on [Vercel](https://vercel.com)
-3. Vercel will automatically detect Next.js and configure the build settings
-4. Click "Deploy" and your app will be live!
+3. **Add environment variables in Vercel dashboard:**
+   - `DATABASE_URL` (use Vercel Postgres or external DB)
+   - `STRIPE_SECRET_KEY` (live key: sk_live_...)
+   - `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` (pk_live_...)
+   - `STRIPE_WEBHOOK_SECRET` (create production webhook)
+   - `NEXT_PUBLIC_BASE_URL` (your Vercel domain)
+   - `ADMIN_KEY` (generate secure key)
 
-**Automatic deployments:** Every push to main/master triggers a production deployment. Pull requests get preview deployments.
+4. **Create production Stripe webhook:**
+   - Go to: https://dashboard.stripe.com/webhooks
+   - Add endpoint: `https://your-domain.vercel.app/api/webhooks/stripe`
+   - Select events: `checkout.session.completed`, `payment_intent.payment_failed`
+   - Copy webhook secret to Vercel environment variables
 
+5. **Deploy!**
+   - Click "Deploy" in Vercel
+   - Automatic deployments on every push to main
 
-#### Method 2: Deploy via Vercel CLI
+### Database Migration for Production
 
-** ENSURE you're in the root dir of the project folder, before running the below commands - [added by RCL] **
-
-For first-time setup, Vercel will prompt you for project configuration. 
 ```bash
-npm i -g vercel
-vercel login
-vercel --prod
+# Generate migration
+npx prisma migrate dev --name init
+
+# Push to production database
+npx prisma db push
+
+# Seed production database
+npx prisma db seed
 ```
-
-Subsequent deployments: use `vercel --prod` for production or `vercel` for previews.
-
-#### Post-Deployment
-
-- **Custom Domain:** Add in Project Settings → Domains
-- **Analytics:** Already included and tracking automatically
-- **Rollback:** Available from the Deployments tab in dashboard
-
-### Other Deployment Options
-
-This Next.js app can be deployed to any platform that supports Node.js:
-- Netlify
-- AWS Amplify
-- Railway
-- DigitalOcean App Platform
-
-Make sure to run `npm run build` before deploying.
-
-## 📝 Available Scripts
-
-- `npm run dev` - Start development server
-- `npm run build` - Create production build
-- `npm run start` - Start production server
-- `npm run lint` - Run ESLint
-
-## 🤝 Contributing
-
-Feel free to submit issues, fork the repository, and create pull requests for any improvements!
-
-## 📄 License
-
-This project is private and for personal use.
-
-## 💡 Tips
-
-- The shopping cart uses React Context for state management - items persist during the session
-- All images are optimized automatically by Next.js
-- The site is fully responsive and works great on mobile devices
-- Hot reload is enabled in development mode - changes appear instantly!
 
 ---
 
-Made with 💕 for plushie lovers everywhere!
+## 📝 Development Workflow
+
+### Phase-Based Development
+
+This project was built incrementally in phases:
+
+1. **Phase 1: Foundation** - Database, API, seed data
+2. **Phase 2: Product Catalog** - Shop page, product details
+3. **Phase 3: Shopping Cart** - Persistent cart with sessions
+4. **Phase 4: Checkout** - Order creation, inventory management
+5. **Phase 5: Admin & Sheets** - Admin dashboard, Google Sheets
+6. **Phase 6: Polish & Deploy** - Stripe payments, email, testing (current)
+
+See [docs/SESSION_NOTES.md](docs/SESSION_NOTES.md) for detailed progress.
+
+### Making Changes
+
+```bash
+# Start dev server
+npm run dev -- --port 3002
+
+# Make changes to code
+# Hot reload updates instantly
+
+# Test changes
+# Visit http://localhost:3002
+
+# Update database schema
+# Edit prisma/schema.prisma, then:
+npx prisma db push
+npx prisma generate
+
+# Commit changes
+git add .
+git commit -m "feat: description of changes"
+git push
+```
+
+---
+
+## 🧑‍💻 Available Scripts
+
+```bash
+# Development
+npm run dev              # Start dev server (port 3000)
+npm run dev -- --port 3002  # Start on specific port
+
+# Build
+npm run build            # Create production build
+npm run start            # Start production server
+
+# Database
+npx prisma generate      # Generate Prisma client
+npx prisma db push       # Push schema to database
+npx prisma db seed       # Seed database with products
+npx prisma studio        # Open Prisma Studio GUI
+
+# Linting
+npm run lint             # Run ESLint
+
+# Stripe (requires Stripe CLI)
+stripe login             # Authenticate Stripe CLI
+stripe listen --forward-to localhost:3002/api/webhooks/stripe
+```
+
+---
+
+## 🐛 Troubleshooting
+
+### Database Connection Issues
+```bash
+# Check PostgreSQL is running
+pg_isready
+
+# Test connection
+psql -U chiho -d plushie_app -c "SELECT 1"
+
+# Reset database
+dropdb plushie_app
+createdb plushie_app
+npx prisma db push
+npx prisma db seed
+```
+
+### Stripe Issues
+- See [docs/STRIPE_SETUP.md](docs/STRIPE_SETUP.md#-troubleshooting)
+- Verify environment variables are set
+- Check webhook listener is running
+- Use Stripe test cards only in development
+
+### Port Already in Use
+```bash
+# Find process using port 3002
+lsof -ti:3002
+
+# Kill process
+kill -9 $(lsof -ti:3002)
+
+# Or use different port
+npm run dev -- --port 3003
+```
+
+---
+
+## 📚 Documentation
+
+Comprehensive documentation in `/docs`:
+
+- [00_PROJECT_INDEX.md](docs/00_PROJECT_INDEX.md) - Documentation hub
+- [SESSION_NOTES.md](docs/SESSION_NOTES.md) - Development progress
+- [DECISIONS.md](docs/DECISIONS.md) - Architectural decisions
+- [STRIPE_SETUP.md](docs/STRIPE_SETUP.md) - Stripe integration
+- [GOOGLE_SHEETS_SETUP.md](docs/GOOGLE_SHEETS_SETUP.md) - Sheets setup
+- [CLAUDE.md](CLAUDE.md) - AI development guide
+- [SKILLS.md](SKILLS.md) - Reusable code patterns
+
+---
+
+## 🤝 Contributing
+
+This is a personal project, but contributions are welcome!
+
+1. Fork the repository
+2. Create feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit changes (`git commit -m 'feat: add amazing feature'`)
+4. Push to branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+---
+
+## 📄 License
+
+This project is private and for educational purposes.
+
+---
+
+## 🙏 Acknowledgments
+
+- Built with [Next.js](https://nextjs.org/)
+- UI components from [shadcn/ui](https://ui.shadcn.com/)
+- Payments powered by [Stripe](https://stripe.com/)
+- Database ORM by [Prisma](https://www.prisma.io/)
+- Developed with assistance from [Claude Code](https://claude.ai/claude-code)
+
+---
+
+## 📞 Support
+
+- **Documentation:** [docs/00_PROJECT_INDEX.md](docs/00_PROJECT_INDEX.md)
+- **Stripe Issues:** [docs/STRIPE_SETUP.md](docs/STRIPE_SETUP.md)
+- **Database Issues:** Check PostgreSQL logs
+- **Deployment Issues:** [Vercel Docs](https://vercel.com/docs)
+
+---
+
+Made with 💕 for AI plushie lovers everywhere! 🧸✨
+
+**Co-Authored-By:** Claude Sonnet 4.5 <noreply@anthropic.com>

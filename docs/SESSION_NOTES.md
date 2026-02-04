@@ -447,20 +447,54 @@
 
 ---
 
-## 📋 NEXT PHASE
+### ✅ Phase 6: Polish & Deploy - IN PROGRESS
+**Date:** Feb 3-4, 2026
 
-### Phase 6: Polish & Deploy (NEXT)
-**Estimated:** Week 7-8
+#### Stripe Payment Integration ✅ COMPLETE
+- ✅ Installed Stripe packages (stripe, @stripe/stripe-js)
+- ✅ Created Stripe client (lib/stripe.ts)
+- ✅ Created checkout session API (POST /api/create-checkout-session)
+- ✅ Implemented webhook handler (POST /api/webhooks/stripe)
+- ✅ Updated checkout page to redirect to Stripe Checkout
+- ✅ Created payment success page (/checkout/success)
+- ✅ Created payment cancel page (/checkout/cancel)
+- ✅ Updated environment variables with Stripe configuration
+- ✅ Created comprehensive Stripe setup guide (docs/STRIPE_SETUP.md)
+- ✅ Created .env.example for easy setup
+- ✅ Updated README.md with Stripe instructions
 
-**Goals:**
-1. Add Stripe payment integration (replace "pending" payment status)
-2. Email confirmations with Resend/SendGrid
-3. Testing suite (Vitest for unit tests, Playwright for e2e)
-4. Performance optimization (image optimization, caching)
-5. SEO improvements (metadata, sitemap)
-6. Error handling improvements
-7. Production deployment checklist
-8. Production environment variables setup
+**Files Created:**
+- `lib/stripe.ts` - Stripe client initialization
+- `app/api/create-checkout-session/route.ts` - Stripe checkout session
+- `app/api/webhooks/stripe/route.ts` - Webhook handler (order creation on payment success)
+- `app/checkout/success/page.tsx` - Payment success page
+- `app/checkout/cancel/page.tsx` - Payment cancelled page
+- `docs/STRIPE_SETUP.md` - Complete setup guide
+- `.env.example` - Environment variables template
+
+**Files Updated:**
+- `app/checkout/page.tsx` - Now redirects to Stripe Checkout
+- `.env` - Added Stripe environment variables
+- `README.md` - Comprehensive update with Stripe setup
+
+**Technical Details:**
+- Stripe Checkout hosted payment page (no custom forms needed)
+- Webhook signature verification for security
+- Order creation happens on successful payment webhook
+- Products matched by name between Stripe and database
+- Inventory updated after successful payment
+- Cart cleared automatically after payment
+- Payment intent ID stored in orders table
+
+**Remaining Phase 6 Goals:**
+1. ✅ Email confirmations with Resend - COMPLETE
+2. ⏳ Testing suite (Vitest for unit tests, Playwright for e2e) - NEXT
+3. ⏳ **Venmo QR payment option** - MISSING FROM ORIGINAL PLAN (needs to be added)
+4. ⏳ Performance optimization (image optimization, caching)
+5. ⏳ SEO improvements (metadata, sitemap)
+6. ⏳ Error handling improvements
+7. ⏳ Production deployment checklist
+8. ⏳ Production environment variables setup
 
 **Optional Enhancements:**
 - User authentication with NextAuth.js (for account creation)
@@ -471,7 +505,595 @@
 
 ---
 
-**Last Updated:** February 3, 2026, 11:30 PM PST
-**Current Status:** Phase 5 complete, ready for Phase 6
+## 📧 CURRENT WORK SESSION (Feb 3, 2:20 PM - 3:55 PM)
+
+### Phase 6.1: Email Confirmations - IN PROGRESS
+
+**What Was Accomplished:**
+
+1. **Installed Resend** ✅
+   - Package: `resend` npm package
+   - Service: Email delivery platform
+   - Free tier: 100 emails/day
+
+2. **User Setup** ✅
+   - User signed up for Resend account
+   - Created API key: `re_U7wwtHFK_8a9twxnwW1umRmLaSXqbN62g`
+   - Added to `.env` file
+
+3. **Email Infrastructure Created** ✅
+   - `lib/resend.ts` - Resend client
+   - `lib/emails/send-order-confirmation.ts` - Email sending function
+   - `lib/emails/order-confirmation.tsx` - Email template (unused due to bug)
+
+4. **Webhook Integration** ✅
+   - Updated `app/api/webhooks/stripe/route.ts`
+   - Sends email after successful order creation
+   - Non-blocking: Email failure doesn't fail order
+
+5. **Bug Encountered & Fixed** 🐛✅
+   - **Problem**: React Email render() returned non-string, caused validation error
+   - **Error**: `The 'html' field must be a 'string'.` (422 status)
+   - **Solution**: Replaced React Email with simple HTML string template
+   - **File Fixed**: `lib/emails/send-order-confirmation.ts` - now generates HTML directly
+
+**Test Results:**
+
+- **First Test** (Order ORD-20260203-9385):
+  - ✅ Webhook received
+  - ✅ Order created
+  - ❌ Email failed (validation error)
+  - Error found in logs: React Email render issue
+
+**Current State:**
+- ✅ Bug fixed - using simple HTML template
+- ✅ Dev server restarted with fix
+- ⏳ **NEEDS TESTING** - User needs to place another test order
+
+**Email Template Includes:**
+- Order number and customer name
+- List of items with quantities and prices
+- Price breakdown (subtotal, tax, shipping, total)
+- Shipping address
+- "What's Next?" section with delivery info
+- Support contact information
+
+**Files Created/Modified:**
+- `lib/resend.ts` - Created
+- `lib/emails/send-order-confirmation.ts` - Created, then fixed
+- `lib/emails/order-confirmation.tsx` - Created (not used)
+- `app/api/webhooks/stripe/route.ts` - Modified (added email sending)
+- `.env` - Modified (added RESEND_API_KEY)
+
+**Next Step:**
+User needs to place one more test order to verify email delivery works.
+
+---
+
+---
+
+## 🔍 DISCOVERY: Missing Feature - Venmo QR (Feb 3, 4:10 PM)
+
+**What Was Discovered:**
+User realized we haven't implemented Venmo QR code payment option, which was in the original requirements.
+
+**Original Requirement:**
+```
+1. Payment Processing
+   - Stripe integration (credit/debit cards) ✅ DONE
+   - Venmo QR code scanning ❌ NOT DONE
+   - Guest checkout flow ✅ DONE
+```
+
+**Why It's Important:**
+- Target audience is teenagers (13-19)
+- Venmo is extremely popular with teens
+- Many teens don't have credit cards but have Venmo
+- Increases conversion rate for teen buyers
+
+**Added to Plan:**
+- DECISION 024 added to DECISIONS.md
+- Added to Phase 6 remaining goals
+- Priority: Medium (after testing, before production)
+
+**Implementation Approach:**
+1. Admin can configure Venmo username in settings
+2. Checkout page shows "Pay with Venmo" button
+3. Generates QR code linking to Venmo payment
+4. Customer scans → pays in Venmo app
+5. Order created as "pending_payment_verification"
+6. Admin manually verifies payment in Venmo
+7. Admin marks order as paid → sends confirmation email
+
+**User Note:**
+User has existing Venmo account for testing and wants it to be admin-configurable.
+
+---
+
+**Last Updated:** February 3, 2026, 4:10 PM PST
+**Current Status:** Phase 6.1 - Email confirmations IN PROGRESS (bug fix applied, testing needed)
 **Port:** 3002 (npm run dev -- --port 3002)
+
+---
+
+## 🎉 COMPLETED WORK SESSION (Feb 3, 12:00 PM - 2:20 PM)
+
+### Stripe Integration Verification - SUCCESS ✅
+
+**What Was Accomplished:**
+
+1. **Fixed Dev Server Issue** ✅
+   - Problem: Dev server was running from wrong project (aieo02_llm_app)
+   - Solution: Killed process, restarted from correct directory (my-ai-plushieapp)
+   - Result: API endpoints now working correctly
+
+2. **Fixed Success Page Error** ✅
+   - Problem: Runtime error "useCart must be used within a CartProvider"
+   - Solution: Added CartProvider to root layout (app/layout.tsx)
+   - Result: Success page displays correctly with order confirmation
+
+3. **Verified Complete Payment Flow** ✅
+   - User added Cotton Candy Puppy Dog Plushie to cart ($26.99)
+   - Completed checkout form with test data
+   - Redirected to Stripe Checkout successfully
+   - Paid with test card: 4242 4242 4242 4242
+   - Redirected to success page
+   - Success page displayed order confirmation
+
+4. **Verified Backend Processing** ✅
+   - **Webhook received**: Stripe listener forwarded checkout.session.completed event
+   - **Order created**: ORD-20260203-0371
+   - **Payment status**: paid
+   - **Order items**: Cotton Candy Puppy Dog Plushie, qty 1, $26.99
+   - **Inventory updated**: Stock decreased from 12 to 11
+   - **Inventory logged**: Change: -1, Reason: sale, Timestamp: 2026-02-03 22:10:45
+
+5. **Database Verification** ✅
+   ```sql
+   Order: ORD-20260203-0371
+   Email: test@example.com
+   Payment Status: paid
+   Payment Method: stripe
+   Total: $26.99
+   Created: 2026-02-03 22:10:45
+   ```
+
+**Files Modified:**
+- `app/layout.tsx` - Added CartProvider wrapper for all pages
+
+**Current State:**
+- ✅ Dev server running from correct project
+- ✅ Stripe listener running and receiving webhooks
+- ✅ Products API working
+- ✅ Checkout session API working
+- ✅ Payment flow working end-to-end
+- ✅ Orders being created in database
+- ✅ Inventory being updated correctly
+- ✅ Success page displaying correctly
+
+---
+
+
+## Session 9: Venmo QR Payment Integration (February 3, 2026, 5:00 PM PST)
+
+**Session Goal:** Implement Venmo QR code payment option as discovered missing requirement.
+
+**Context:** User realized Venmo QR was in original requirements but not implemented. Chose to implement before testing suite.
+
+### What Was Accomplished
+
+#### 1. Venmo Backend Infrastructure ✅
+
+**Created lib/venmo.ts:**
+- `generateVenmoLink()` - Creates Venmo deep link (venmo://paycharge)
+- `generateVenmoQRCode()` - Generates QR code as data URL
+- `getVenmoUsername()` - Retrieves configured username from env
+- QR code styled with Venmo blue (#008CFF)
+
+**Created app/api/checkout/venmo/route.ts:**
+- Validates shipping info and cart items
+- Checks Venmo is configured (not placeholder)
+- Verifies stock availability
+- Creates order with:
+  - payment_method: 'venmo'
+  - payment_status: 'pending_payment_verification'
+  - order_status: 'pending_payment'
+- Generates QR code with order total and order number
+- Returns order details and QR code data URL
+
+#### 2. Venmo Frontend - Customer Flow ✅
+
+**Created app/checkout/venmo/page.tsx:**
+- Beautiful QR code display page
+- Shows order number and amount
+- Displays QR code for Venmo app scanning
+- Step-by-step payment instructions
+- Alternative options (back to checkout, download Venmo)
+- FAQ section
+- Responsive design with gradient backgrounds
+
+**Updated app/checkout/page.tsx:**
+- Added payment method selection state
+- Radio buttons for Stripe vs Venmo
+- Different submit handlers based on payment method
+- Updated button text ("Get Venmo QR Code" vs "Continue to Payment")
+- Visual payment method info boxes
+- Clears cart after Venmo order creation
+
+#### 3. Venmo Admin - Verification Flow ✅
+
+**Created app/admin/venmo/page.tsx:**
+- Lists all pending Venmo orders
+- Shows order details, customer info, items
+- Visual verification instructions
+- "Verify Payment Received" button
+- Real-time pending count
+- Refresh list functionality
+- Beautiful card-based UI
+
+**Created app/api/admin/venmo/pending/route.ts:**
+- Requires admin authentication
+- Fetches orders with payment_status: 'pending_payment_verification'
+- Includes order items and product details
+- Orders sorted by created_at DESC
+
+**Created app/api/admin/venmo/verify/route.ts:**
+- Requires admin authentication
+- Verifies order is pending Venmo payment
+- Updates order to:
+  - payment_status: 'paid'
+  - order_status: 'processing'
+- Sends confirmation email to customer
+- Returns success response
+
+**Updated app/admin/dashboard/page.tsx:**
+- Added pendingVenmo to stats
+- Fetches pending count from API
+- Added Venmo card to Quick Actions (3-column grid)
+- Shows red badge with pending count
+- Dynamic description based on pending count
+- Links to /admin/venmo
+
+#### 4. Security Configuration ✅
+
+**Updated .env:**
+- Added VENMO_USERNAME="RchihoL" (user's live account)
+- Added security comment warning never to commit
+- Verified .gitignore protects .env* files
+
+### Technical Details
+
+**Venmo Deep Link Format:**
+```
+venmo://paycharge?txn=pay&recipients=USERNAME&amount=TOTAL&note=ORDER_NUMBER
+```
+
+**QR Code Generation:**
+- Library: qrcode npm package
+- Size: 300x300px
+- Colors: Venmo blue (#008CFF) on white
+- Format: Data URL for direct img src use
+
+**Order Flow:**
+1. Customer selects Venmo at checkout
+2. Order created with pending_payment_verification status
+3. QR code generated and displayed
+4. Customer scans with Venmo app
+5. Admin checks Venmo for payment
+6. Admin verifies in dashboard
+7. Order status updated to processing
+8. Confirmation email sent
+
+**Database States:**
+- Initial: payment_status='pending_payment_verification', order_status='pending_payment'
+- After verification: payment_status='paid', order_status='processing'
+
+### Files Created
+
+**Venmo Library:**
+- `lib/venmo.ts` - Venmo utilities
+
+**API Routes:**
+- `app/api/checkout/venmo/route.ts` - Create Venmo orders
+- `app/api/admin/venmo/pending/route.ts` - Fetch pending orders
+- `app/api/admin/venmo/verify/route.ts` - Verify payments
+
+**Pages:**
+- `app/checkout/venmo/page.tsx` - QR code display
+- `app/admin/venmo/page.tsx` - Admin verification UI
+
+### Files Modified
+
+- `app/checkout/page.tsx` - Added payment method selection
+- `app/admin/dashboard/page.tsx` - Added Venmo card and stats
+- `.env` - Added VENMO_USERNAME configuration
+
+### Dependencies Installed
+
+```bash
+npm install qrcode
+npm install --save-dev @types/qrcode
+```
+
+### Testing Checklist (To Be Done)
+
+- [ ] Test Venmo checkout creates order
+- [ ] Test QR code displays correctly
+- [ ] Test Venmo deep link format
+- [ ] Test admin can view pending orders
+- [ ] Test admin verification updates order
+- [ ] Test confirmation email sent after verification
+- [ ] Test cart clears after Venmo order
+- [ ] Test with real Venmo app scanning
+
+### Current Status
+
+**Phase 6 Progress:**
+- ✅ 6.1 Stripe Integration - COMPLETE
+- ✅ 6.2 Email Confirmations - COMPLETE
+- ✅ 6.4 Venmo QR Payment - COMPLETE (just finished)
+- ⏳ 6.5 Testing Suite - NEXT
+- ⏳ 6.6 Production Deployment - Pending
+
+**Next Steps:**
+1. User should test Venmo checkout flow
+2. Verify QR code generation works
+3. Test admin verification process
+4. Then move to testing suite implementation
+
+### User Interaction Notes
+
+- User provided live Venmo username: @RchihoL
+- User requested high security protection for username
+- User chose to implement Venmo before testing suite (Option B)
+
+---
+
+
+## Session 10: Venmo Integration Completion & Bug Fixes (February 3, 2026, 9:00 PM - 10:30 PM PST)
+
+**Session Goal:** Complete Venmo integration testing, fix bugs, test both payment methods
+
+**Context:** Venmo QR payment was implemented but had authentication bugs preventing admin verification. Email confirmations weren't sending. Cart wasn't clearing properly.
+
+### What Was Accomplished
+
+#### 1. Fixed Admin Venmo Authentication Bug ✅
+
+**Problem:** Admin /venmo page showed "Unauthorized" error
+**Root Cause:** Admin authentication mismatch
+- Frontend stored admin_key in localStorage
+- Backend API expected admin_key in cookies
+- Mismatch prevented API access
+
+**Solution:**
+- Updated admin Venmo page to send admin_key via x-admin-key header
+- Updated both API routes (/api/admin/venmo/pending and /api/admin/venmo/verify) to check both header AND cookies
+- Added credentials: 'include' to fetch calls (initially, then switched to header approach)
+
+**Files Modified:**
+- `app/admin/venmo/page.tsx` - Added x-admin-key header to fetch calls
+- `app/api/admin/venmo/pending/route.ts` - Check header OR cookie
+- `app/api/admin/venmo/verify/route.ts` - Check header OR cookie
+
+**Result:** Admin can now see pending Venmo orders and verify payments
+
+#### 2. Fixed Email Confirmation Bug ✅
+
+**Problem:** No confirmation emails sent after Venmo payment verification
+**Root Cause:** Parameter name mismatch in email function call
+- Verify route sent `shipping:` parameter
+- Email function expected `shippingCost:` parameter
+- Missing `customerName` parameter
+- shippingAddress had `name:` property but shouldn't
+
+**Error Log:**
+```
+Failed to send order confirmation email: TypeError: Cannot read properties of undefined (reading 'toFixed')
+at generateEmailHTML (lib/emails/send-order-confirmation.ts:94:69)
+```
+
+**Solution:**
+Updated `/api/admin/venmo/verify/route.ts`:
+- Changed `shipping:` to `shippingCost:`
+- Added `customerName:` parameter
+- Removed `name:` from shippingAddress object
+- Added detailed logging for debugging
+
+**Result:** Confirmation emails now send successfully after admin verifies Venmo payment
+
+#### 3. Fixed $NaN Display Bug in Admin Orders ✅
+
+**Problem:** Admin orders page showed "$NaN" for item prices and quantities
+**Root Cause:** Field name mismatch
+- Database stores `price_at_time` 
+- Frontend TypeScript interface expected `price`
+- parseFloat(undefined) = NaN
+
+**Solution:**
+Updated `app/admin/orders/page.tsx`:
+- Changed interface from `price: string` to `price_at_time: string`
+- Updated display code to use `parseFloat(item.price_at_time)`
+- Fixed both quantity display and total calculation
+
+**Result:** Prices now display correctly (e.g., "$0.99" instead of "$NaN")
+
+#### 4. Added Full Product Editing Capabilities ✅
+
+**User Request:** Make product images uploadable and descriptions editable from admin
+
+**Implementation:**
+- Added Product Name editing field (was static before)
+- Added Description textarea
+- Added Image URL input with live preview
+- All changes save to database via PUT /api/admin/products/[id]
+
+**Files Modified:**
+- `app/admin/products/page.tsx` - Added name, description, image_url fields to edit form
+- `app/api/admin/products/[id]/route.ts` - Added image_url to accepted update fields
+
+**Features:**
+- Product Name input (new!)
+- Description textarea with placeholder
+- Image URL input with real-time preview
+- Image preview shows validation (shows placeholder if URL invalid)
+- All existing fields (price, stock, status)
+
+**User Note:** Changes require hard refresh on shop page (Cmd+Shift+R) to see updates due to browser caching
+
+**Result:** Full product management from admin dashboard, changes reflect on storefront
+
+#### 5. Fixed Cart Clearing for Venmo Orders ✅
+
+**Problem:** Cart still showed items after Venmo order created
+**Root Cause:** Cart cleared client-side only, not from database
+- Client-side clearCart() called
+- But database cart_items not deleted
+- On refresh, cart reloaded from server session
+
+**Solution:**
+Updated `app/api/checkout/venmo/route.ts`:
+```typescript
+// Clear cart items from database
+if (sessionId) {
+  await prisma.cartItem.deleteMany({
+    where: { session_id: sessionId },
+  });
+}
+```
+
+**Result:** Cart now clears server-side immediately after Venmo order creation (matches Stripe behavior)
+
+#### 6. Changed Venmo Verify Button Color ✅
+
+**User Request:** Change pink verification button to green
+**Implementation:** Updated button className in `app/admin/venmo/page.tsx`
+```typescript
+className="w-full py-6 text-lg font-bold bg-green-600 hover:bg-green-700 text-white"
+```
+
+**Result:** Verification button now green, more intuitive for "approve/verify" action
+
+#### 7. Updated Venmo Business Account ✅
+
+**User Action:** Created Venmo Business Profile
+- Username: @aichiho (business account)
+- Previous: @RchihoL (personal account)
+- Reason: Personal accounts can't accept QR code payments
+
+**Updated:** `.env` VENMO_USERNAME="aichiho"
+
+**Result:** QR code scanning now works with Venmo business profile
+
+#### 8. Database Reset for Clean Testing ✅
+
+**User Request:** Clear all orders and revenue to start fresh tracking
+**Action:** Deleted all test orders, order items, and related inventory logs
+
+```sql
+DELETE FROM order_items;  -- 10 rows
+DELETE FROM orders;        -- 10 rows  
+DELETE FROM inventory_log WHERE reason IN ('sale', 'order_cancelled'); -- 5 rows
+```
+
+**Result:** Clean database ready for production-like testing
+
+### Testing Completed
+
+#### Venmo End-to-End Test ✅
+
+**Test Flow:**
+1. Customer creates order for WOW Purple Bunny ($0.99)
+2. Selects Venmo payment method
+3. Gets QR code (scanned successfully with business account)
+4. Clicks "I've Completed Payment" → Success page
+5. Admin views pending order at /admin/venmo
+6. Admin clicks green "Verify Payment Received" button
+7. Order status: pending_payment_verification → paid
+8. Order status: pending_payment → processing
+9. Confirmation email sent to aichihohochi@gmail.com
+
+**Results:**
+- ✅ Order created: ORD-20260203-4019
+- ✅ Payment verified successfully
+- ✅ Email delivered to inbox
+- ✅ Revenue tracking updated (+$0.99)
+- ✅ Cart cleared from database
+- ✅ Admin orders page shows correct prices (no $NaN)
+
+**Status:** Venmo payment flow 100% working
+
+### Current Project State
+
+**Database:**
+- Total Orders: 1 (Venmo)
+- Total Revenue: $0.99
+- Products: 14 (all editable)
+
+**Payment Methods:**
+- ✅ Venmo QR - Fully functional
+- ⏳ Stripe - Ready to test
+
+**Features Complete:**
+- ✅ Product catalog
+- ✅ Shopping cart (session-based)
+- ✅ Stripe checkout integration
+- ✅ Venmo QR payment integration
+- ✅ Email confirmations (Resend)
+- ✅ Admin dashboard
+- ✅ Admin product management (name, description, image, price, stock)
+- ✅ Admin order management
+- ✅ Admin Venmo verification
+- ✅ Revenue tracking
+- ✅ Inventory management
+
+**Known Issues:**
+- None critical
+- Browser caching requires hard refresh to see product changes (expected behavior)
+
+### Files Modified This Session
+
+**Admin Pages:**
+- `app/admin/venmo/page.tsx` - Fixed auth, changed button to green
+- `app/admin/products/page.tsx` - Added name, description, image editing
+- `app/admin/orders/page.tsx` - Fixed $NaN bug
+
+**API Routes:**
+- `app/api/admin/venmo/pending/route.ts` - Fixed authentication
+- `app/api/admin/venmo/verify/route.ts` - Fixed email params, added logging
+- `app/api/admin/products/[id]/route.ts` - Added image_url update
+- `app/api/checkout/venmo/route.ts` - Added cart clearing
+
+**Configuration:**
+- `.env` - Updated VENMO_USERNAME to business account
+
+### Next Steps
+
+**Immediate:**
+1. Test Stripe payment flow end-to-end
+2. Verify email confirmation for Stripe orders
+3. Verify cart clearing for Stripe orders
+4. Confirm both payment methods work in parallel
+
+**Future:**
+- Production deployment to Vercel
+- Testing suite (optional)
+- Performance optimization
+- SEO improvements
+
+### User Feedback
+
+**Positive:**
+- "the venmo workflow worked end 2 end and email was delivered after Venmo payment verified"
+- Revenue tracking works correctly
+- Product editing is intuitive
+
+**Requests Fulfilled:**
+- Green verify button (was pink)
+- Product name editing
+- Description and image editing
+- Cart clearing for Venmo
+- Email confirmations working
+
+---
 

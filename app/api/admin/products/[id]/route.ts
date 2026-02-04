@@ -42,7 +42,7 @@ export async function PUT(
     }
 
     const body = await request.json();
-    const { name, description, price, stock_quantity, status } = body;
+    const { name, description, image_url, price, stock_quantity, status } = body;
 
     // Get current product for inventory logging
     const currentProduct = await prisma.product.findUnique({
@@ -62,6 +62,7 @@ export async function PUT(
       data: {
         ...(name && { name }),
         ...(description !== undefined && { description }),
+        ...(image_url && { image_url }),
         ...(price && { price: parseFloat(price) }),
         ...(stock_quantity !== undefined && { stock_quantity: parseInt(stock_quantity) }),
         ...(status && { status }),

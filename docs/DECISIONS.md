@@ -738,8 +738,454 @@ MVP with single admin doesn't need complex auth system. Key-based auth works imm
 **Why This Decision:**
 Admin dashboard is more user-friendly than Sheets for day-to-day product management. But Sheets integration provides valuable bulk import and data export capabilities. Making Sheets optional gives best of both worlds.
 
+## DECISION 022: Stripe Checkout Implementation - Hosted Payment Page
+
+**Date:** 2026-02-03
+**Status:** Accepted
+**Context:** Phase 6 requires real payment processing. Need to choose between custom payment form vs. Stripe Checkout hosted page.
+
+**Decision:**
+Use **Stripe Checkout hosted payment page** instead of custom payment form:
+- Redirect to Stripe-hosted checkout after collecting shipping info
+- Stripe handles all payment UI (card input, validation, 3D Secure)
+- Webhook creates order after successful payment
+- Success/cancel pages for post-payment redirects
+
+**Consequences:**
+- ✅ **Positive:** PCI-DSS compliance handled entirely by Stripe (no card data touches our servers)
+- ✅ **Positive:** Stripe handles all payment edge cases (3D Secure, failed cards, retries)
+- ✅ **Positive:** Mobile-optimized payment experience (Apple Pay, Google Pay support)
+- ✅ **Positive:** Faster development (no custom payment form to build/secure)
+- ✅ **Positive:** Automatic fraud detection by Stripe Radar
+- ✅ **Positive:** Multiple payment methods supported (cards, digital wallets)
+- ⚠️ **Negative:** Redirect flow (users leave our site briefly)
+- ⚠️ **Negative:** Less control over payment UI customization
+- ⚠️ **Negative:** Requires webhook setup for order creation
+
+**Alternatives Considered:**
+- Stripe Elements (custom form): More UI control, but complex and requires PCI compliance
+- Stripe Payment Intents API: Lower-level, more flexibility, but much more code
+- PayPal Checkout: Popular but less developer-friendly and higher fees
+
+**Why This Decision:**
+Stripe Checkout is the fastest, safest, and most reliable option. It handles all payment complexities (3D Secure, regional requirements, fraud detection) automatically. The redirect flow is acceptable since it's industry-standard and provides the best security. Webhook-based order creation ensures we only create orders for successful payments.
+
+**Implementation Details:**
+- Checkout collects shipping info first (our form)
+- Redirect to Stripe Checkout with pre-filled email and line items
+- Webhook processes `checkout.session.completed` event
+- Order created in database with `payment_status: 'paid'`
+- Inventory updated, cart cleared automatically
+- User redirected to success page with confirmation
+
+---
+
+## DECISION 023: Email Service - Resend for Transactional Emails
+
+**Date:** 2026-02-03
+**Status:** Accepted
+**Context:** Phase 6.1 requires sending order confirmation emails to customers after successful payment. Need reliable email delivery service.
+
+**Decision:**
+Use **Resend** for transactional emails (order confirmations, shipping notifications):
+- Simple HTML email templates (not React Email to avoid complexity)
+- Resend API for email delivery
+- Free tier: 100 emails/day, 3,000/month
+- Development domain: onboarding@resend.dev
+
+**Consequences:**
+- ✅ **Positive:** Simple, modern API (easy to use)
+- ✅ **Positive:** Generous free tier for MVP
+- ✅ **Positive:** No credit card required to start
+- ✅ **Positive:** Good deliverability rates
+- ✅ **Positive:** Fast setup (15 minutes)
+- ✅ **Positive:** Professional email templates with order details
+- ⚠️ **Negative:** Development domain (resend.dev) until custom domain configured
+- ⚠️ **Negative:** Rate limits on free tier (sufficient for MVP)
+
+**Alternatives Considered:**
+- SendGrid: More complex setup, similar free tier
+- AWS SES: Cheaper at scale but complex setup, requires AWS account
+- Mailgun: Similar to SendGrid, older API
+- Postmark: Good but only 100 emails/month free
+
+**Why This Decision:**
+Resend has the simplest API and best developer experience. Setup takes minutes vs. hours for alternatives. Free tier is perfect for MVP testing. Modern service built for developers. Can easily scale to paid tier when needed.
+
+**Implementation Details:**
+- Email sent after successful Stripe webhook processing
+- HTML template includes: order number, items, pricing, shipping address, delivery timeline
+- Non-blocking: Email failure doesn't fail the order creation
+- From address: onboarding@resend.dev (testing), can add custom domain later
+- Template: Plain HTML (not React Email) for reliability
+
+**Technical Issue Encountered & Fixed:**
+- Initial implementation used @react-email/render which caused validation error
+- Fixed by using simple HTML string template generation
+- Lesson: Keep it simple for MVP, add complexity only when needed
+
+---
+
+## DECISION 024: Venmo QR Payment Option - Teen-Friendly Alternative
+
+**Date:** 2026-02-03
+**Status:** Accepted (Not Yet Implemented)
+**Context:** Original requirements included Venmo QR code scanning as payment option. Venmo is extremely popular with teenagers (target audience) for peer-to-peer payments. Need to add alongside Stripe for maximum payment flexibility.
+
+**Decision:**
+Add **Venmo QR code payment option** at checkout:
+- Admin-configurable Venmo account (username stored in settings)
+- Generate QR code at checkout that links to Venmo payment
+- Customer scans QR code → opens Venmo app → completes payment
+- Manual order verification (admin confirms payment received)
+- Optional: Mark order as "pending payment verification"
+
+**Consequences:**
+- ✅ **Positive:** Appeals to teenage target audience (Venmo very popular)
+- ✅ **Positive:** No transaction fees for seller (P2P is free)
+- ✅ **Positive:** Simple for customers (scan & pay)
+- ✅ **Positive:** Admin can update Venmo account anytime
+- ⚠️ **Negative:** Manual verification required (admin checks Venmo)
+- ⚠️ **Negative:** No automatic order confirmation (until admin verifies)
+- ⚠️ **Negative:** Could be abused (fake screenshots) - need verification process
+
+**Alternatives Considered:**
+- Stripe only: Misses teen-preferred payment method
+- PayPal: Less popular with teens than Venmo
+- Cash App: Similar to Venmo but less widely used
+- Venmo Business API: Not available/limited access
+
+**Why This Decision:**
+Target audience (13-19) heavily uses Venmo for payments. Many teens don't have credit cards but do have Venmo linked to parents' bank accounts or debit cards. Adding Venmo increases conversion rate for teen buyers.
+
+**Implementation Plan:**
+1. Admin settings: Add Venmo username field
+2. Checkout page: Add "Pay with Venmo" button
+3. Generate Venmo deep link: `venmo://paycharge?txn=pay&recipients=USERNAME&amount=TOTAL&note=ORDER_NUMBER`
+4. Display QR code (using QR library)
+5. Order created with status: "pending_payment_verification"
+6. Admin dashboard: View pending orders, mark as paid after verifying Venmo
+7. Send confirmation email after admin verification
+
+**Priority:** Medium (add after testing, before production deployment)
+
+---
+
+## DECISION 025: Venmo QR Payment Implementation Complete
+
+**Date:** 2026-02-03, 5:30 PM PST
+**Phase:** 6.4
+**Decision Maker:** Claude (with user approval)
+
+**Decision:** Completed full Venmo QR payment integration with admin-configurable username.
+
+**What Was Built:**
+1. **Backend:**
+   - `lib/venmo.ts` - Venmo deep link and QR generation utilities
+   - `app/api/checkout/venmo/route.ts` - Create Venmo orders with pending status
+   - `app/api/admin/venmo/pending/route.ts` - Fetch pending Venmo orders
+   - `app/api/admin/venmo/verify/route.ts` - Admin verification and email sending
+
+2. **Frontend:**
+   - `app/checkout/venmo/page.tsx` - QR code display with instructions
+   - Updated `app/checkout/page.tsx` - Payment method selection (Stripe vs Venmo)
+   - `app/admin/venmo/page.tsx` - Admin verification UI
+   - Updated `app/admin/dashboard/page.tsx` - Venmo card with pending badge
+
+3. **Configuration:**
+   - `.env` VENMO_USERNAME - Set to user's live account (@RchihoL)
+   - Protected by .gitignore
+   - Configurable without code changes
+
+**Technical Decisions:**
+
+1. **QR Code Library:**
+   - Chose: `qrcode` npm package
+   - Why: Simple, no React dependencies, generates data URLs
+   - Alternative: react-qrcode (rejected - React dependency unnecessary)
+
+2. **Payment Verification Flow:**
+   - Chose: Manual admin verification
+   - Why: Venmo has no official API for merchant payments
+   - Order status: pending_payment_verification → processing
+   - Payment status: pending_payment_verification → paid
+
+3. **Order Creation Timing:**
+   - Chose: Create order before payment (unlike Stripe)
+   - Why: Need order number for Venmo note and QR code
+   - Risk mitigation: Pending status, admin verification required
+
+4. **QR Code Styling:**
+   - Chose: Venmo blue (#008CFF) on white background
+   - Why: Brand recognition, matches Venmo app
+   - Size: 300x300px (scannable from reasonable distance)
+
+**Why This Implementation:**
+- No external dependencies beyond qrcode library
+- Admin-configurable (env variable, not hardcoded)
+- Secure (username protected in .env, never committed)
+- Email confirmation sent after admin verification
+- Clear visual distinction from Stripe flow
+- Teen-friendly payment option
+
+**Security Considerations:**
+- Venmo username in .env (protected by .gitignore)
+- Admin authentication required for verification
+- Order created but not fulfilled until payment verified
+- Manual verification prevents fraud
+- Email confirmation provides customer assurance
+
+**User Experience:**
+- Payment method selection on checkout page
+- Clear QR code display with instructions
+- Alternative option to download Venmo app
+- FAQ section answers common questions
+- Admin dashboard badge shows pending count
+- Confirmation email after verification
+
+**Trade-offs:**
+- **Manual verification** vs automated (accepted: Venmo has no API)
+- **Order before payment** vs payment before order (accepted: need order number)
+- **Simple HTML QR page** vs React components (accepted: simpler, faster)
+
+**Testing Required:**
+- [ ] QR code generation with correct amount and note
+- [ ] Venmo deep link format works in app
+- [ ] Admin can view pending orders
+- [ ] Verification updates order and sends email
+- [ ] Cart clears after order creation
+
+**Priority:** HIGH - Complete before production deployment
+
 ---
 
 **End of Decisions Log**
-**Last Updated:** 2026-02-03
-**Next Review:** After Phase 6 (Polish & Deploy)
+**Last Updated:** 2026-02-03, 5:30 PM PST
+**Next Review:** After testing suite implementation
+
+## DECISION 026: Admin Authentication - Header vs Cookie
+
+**Date:** 2026-02-03, 9:30 PM PST
+**Phase:** 6.4 (Venmo Integration)
+**Decision Maker:** Claude (fixing bug discovered by user)
+
+**Problem:** Admin Venmo API routes returned "Unauthorized" even when logged in
+
+**Root Cause:**
+- Frontend admin authentication uses localStorage
+- Backend API routes expected cookies
+- Mismatch prevented access to /api/admin/venmo/* routes
+
+**Decision:** Support both authentication methods in API routes
+
+**Implementation:**
+```typescript
+// Check both header and cookie
+const adminKeyHeader = request.headers.get('x-admin-key');
+const cookieStore = await cookies();
+const adminKeyCookie = cookieStore.get('admin_key')?.value;
+const adminKey = adminKeyHeader || adminKeyCookie;
+```
+
+**Why This Approach:**
+- **Backward compatible** - Existing cookie-based auth still works
+- **Flexible** - Supports both localStorage and cookie patterns
+- **Minimal changes** - Only update API routes, not entire auth system
+- **No refactor needed** - Don't have to change admin-context.tsx
+
+**Alternative Considered:**
+- **Option A:** Change admin-context to use cookies instead of localStorage
+  - Rejected: More invasive, would require updating all admin pages
+- **Option B:** Header-only authentication
+  - Rejected: Would break any existing cookie-based auth
+
+**Trade-offs:**
+- **Pro:** Quick fix, minimal code changes
+- **Pro:** Supports both patterns
+- **Con:** Dual authentication paths (slightly more complex)
+
+**Affected Files:**
+- `app/api/admin/venmo/pending/route.ts`
+- `app/api/admin/venmo/verify/route.ts`
+
+---
+
+## DECISION 027: Email Parameter Naming Convention
+
+**Date:** 2026-02-03, 9:45 PM PST
+**Phase:** 6.4 (Venmo Integration)
+**Decision Maker:** Claude (fixing email bug)
+
+**Problem:** Email confirmation failed with "Cannot read properties of undefined (reading 'toFixed')"
+
+**Root Cause:** Parameter name mismatch
+- Email function interface defined `shippingCost: number`
+- Verify route passed `shipping: number`
+- Result: shippingCost was undefined
+
+**Decision:** Enforce strict parameter naming matching interface definitions
+
+**Why This Matters:**
+TypeScript interfaces prevent this at compile time, but:
+- Parameter names must match exactly
+- No shorthand or abbreviations
+- Explicit is better than implicit
+
+**Convention Established:**
+```typescript
+// Interface (source of truth)
+interface SendOrderConfirmationParams {
+  shippingCost: number;  // ← Must use this exact name
+  customerName: string;  // ← Not "name"
+}
+
+// Caller must match exactly
+await sendOrderConfirmation({
+  shippingCost: Number(order.shipping_cost),  // ✅ Correct
+  customerName: order.customer_name,          // ✅ Correct
+  // shipping: Number(order.shipping_cost),   // ❌ Wrong
+});
+```
+
+**Lesson Learned:**
+When creating an order confirmation or similar function:
+1. Define interface first
+2. Use descriptive, unambiguous names
+3. Match parameter names exactly when calling
+4. Add TypeScript strict mode to catch these
+
+**Related Bug Fix:**
+Also removed `name` from shippingAddress object (not in interface)
+
+---
+
+## DECISION 028: Cart Clearing Strategy - Server-Side for Both Payment Methods
+
+**Date:** 2026-02-03, 10:15 PM PST
+**Phase:** 6.4 (Venmo Integration)  
+**Decision Maker:** Claude (per user request)
+
+**Problem:** Venmo orders cleared cart client-side only; cart reappeared on refresh
+
+**Decision:** Clear cart server-side (database) for BOTH Stripe and Venmo
+
+**Implementation:**
+
+**Stripe (existing):**
+- Webhook clears cart after payment confirmed
+- Server-side deletion from cart_items table
+
+**Venmo (new):**
+```typescript
+// In /api/checkout/venmo after order creation
+if (sessionId) {
+  await prisma.cartItem.deleteMany({
+    where: { session_id: sessionId },
+  });
+}
+```
+
+**Why Server-Side:**
+- **Persistence:** Cart stored in database (session-based for guest users)
+- **Reliability:** Client-side clearing can fail or be bypassed
+- **Consistency:** Page refresh reloads from server
+- **Security:** Server is source of truth
+
+**User Experience:**
+- Venmo: Cart cleared immediately when order created (before showing QR)
+- Stripe: Cart cleared when webhook confirms payment
+- Both: Cart stays empty on refresh/navigation
+
+**Trade-offs:**
+- **Pro:** Consistent behavior across payment methods
+- **Pro:** Prevents abandoned cart confusion
+- **Con:** If order fails after cart cleared, user must re-add items (acceptable for payment confirmation flow)
+
+---
+
+## DECISION 029: Admin Product Management - Image URL vs File Upload
+
+**Date:** 2026-02-03, 10:00 PM PST
+**Phase:** 6.4 (Product Management Enhancement)
+**Decision Maker:** Claude (per user request)
+
+**User Request:** "allow the product images to be uploadable"
+
+**Decision:** Implement URL input (with preview) instead of file upload for MVP
+
+**Why URL-Based:**
+- **Simplicity:** No file upload infrastructure needed
+- **No cloud storage:** Avoid AWS S3, Cloudinary, etc. setup
+- **Immediate preview:** Can validate URL works before saving
+- **Flexibility:** Supports both local (/public) and external URLs
+- **Fast implementation:** Simple text input vs multipart form handling
+
+**Implementation:**
+```typescript
+<Input
+  type="text"
+  value={editForm.image_url}
+  placeholder="/path/to/image.jpg"
+/>
+{editForm.image_url && (
+  <img src={editForm.image_url} alt="Preview" className="w-20 h-20" />
+)}
+```
+
+**Current Workflow:**
+1. Admin pastes image URL (from /public or external source)
+2. Live preview shows image
+3. Save updates product.image_url
+4. Storefront displays new image
+
+**Future Enhancement Path (if needed):**
+- Add file upload component
+- Integrate Cloudinary or AWS S3
+- Auto-upload and return URL
+- Keep URL field as fallback
+
+**Trade-offs:**
+- **Pro:** No infrastructure complexity
+- **Pro:** Works with existing Next.js public folder
+- **Pro:** Fast to implement and test
+- **Con:** Requires images hosted somewhere already
+- **Con:** No built-in image optimization (could add next/image later)
+
+**Acceptable for MVP:** Yes - admin can manually add images to /public or use external CDN
+
+---
+
+## DECISION 030: Venmo Button Color - Green for Verification Actions
+
+**Date:** 2026-02-03, 9:50 PM PST
+**Phase:** 6.4 (UI/UX)
+**Decision Maker:** User request
+
+**Request:** "change the button to Green after I verify the venmo payment"
+
+**Decision:** Make verification button green (before clicking)
+
+**Why Green:**
+- **Industry standard:** Green = approve, confirm, verify
+- **Visual clarity:** Distinct from pink theme used elsewhere
+- **User expectation:** Green buttons typically mean "proceed" or "confirm"
+- **Accessibility:** High contrast for action buttons
+
+**Implementation:**
+```typescript
+className="bg-green-600 hover:bg-green-700 text-white"
+```
+
+**Color Palette:**
+- **Pink/Primary:** General actions, branding
+- **Green:** Approval/verification actions
+- **Red:** Delete/cancel actions
+- **Blue:** Info/navigation actions
+
+**User Feedback:** Positive - more intuitive for payment verification
+
+---
+
+**End of Decisions Log**
+**Last Updated:** 2026-02-03, 10:30 PM PST
+**Next Review:** After Stripe testing and before production deployment

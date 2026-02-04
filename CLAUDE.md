@@ -3,7 +3,8 @@
 **Project Type:** Full-stack e-commerce application
 **AI Tool:** Claude Code (Sonnet 4.5)
 **Methodology:** Phase-by-phase incremental development
-**Last Updated:** February 3, 2026
+**Last Updated:** February 4, 2026
+**Status:** ✅ Production Ready - Both payment methods tested and verified
 
 ---
 
@@ -443,6 +444,257 @@ await prisma.cartItem.findMany({
 // 7. Clear cart
 // 8. Return order details
 ```
+
+---
+
+## 🐛 Common Implementation Bugs & Fixes
+
+### Bug Pattern 1: Authentication Method Mismatch
+
+**Problem:** Admin routes expecting cookies but frontend sending headers
+```
+Error: Unauthorized (401) even when logged in
+```
+
+**Root Cause:** Inconsistent authentication storage
+- Frontend: localStorage → sends in headers
+- Backend: Checks cookies only
+
+**Solution:** Support both methods in API routes
+```typescript
+// Check BOTH header and cookie
+const adminKeyHeader = request.headers.get('x-admin-key');
+const cookieStore = await cookies();
+const adminKeyCookie = cookieStore.get('admin_key')?.value;
+const adminKey = adminKeyHeader || adminKeyCookie;
+```
+
+**Lesson:** When implementing authentication, standardize on ONE method or explicitly support both.
+
+---
+
+### Bug Pattern 2: Parameter Naming Mismatch
+
+**Problem:** Email function fails with "Cannot read properties of undefined (reading 'toFixed')"
+```typescript
+// Interface expects
+shippingCost: number
+
+// Caller provides
+shipping: number  // ❌ Wrong name
+```
+
+**Solution:** Match parameter names EXACTLY to interface definitions
+```typescript
+// ✅ Correct
+await sendOrderConfirmation({
+  shippingCost: Number(order.shipping_cost),
+  customerName: order.customer_name,
+})
+```
+
+**Lesson:** When creating functions with object parameters, use TypeScript interfaces and match names precisely. Don't use abbreviations or shortened names.
+
+---
+
+### Bug Pattern 3: Database Field Name Mismatch
+
+**Problem:** UI shows "$NaN" for prices
+```typescript
+// Interface expects
+item.price
+
+// Database has
+item.price_at_time  // ❌ Mismatch
+```
+
+**Solution:** Update TypeScript interface to match database schema
+```typescript
+interface OrderItem {
+  price_at_time: string;  // ✅ Match DB column name
+  quantity: number;
+}
+
+// Display
+parseFloat(item.price_at_time).toFixed(2)
+```
+
+**Lesson:** Database column names MUST match TypeScript interface field names exactly. Use snake_case in both when working with PostgreSQL.
+
+---
+
+### Bug Pattern 4: Client-Side Only Cart Clearing
+
+**Problem:** Cart reappears after refresh despite clearing
+```typescript
+// ❌ Client-side only
+clearCart()  // Updates React state
+```
+
+**Root Cause:** Cart is session-based in database, client state doesn't persist
+
+**Solution:** Clear cart server-side
+```typescript
+// ✅ Server-side deletion
+if (sessionId) {
+  await prisma.cartItem.deleteMany({
+    where: { session_id: sessionId },
+  });
+}
+```
+
+**Lesson:** For session-based features, ALWAYS update the server state, not just client state. Client state should be derived from server.
+
+---
+
+## 💳 Payment Integration Patterns
+
+### Pattern 1: Dual Payment Methods
+
+**When to use:** Multiple payment processors in one app (Stripe + Venmo)
+
+**Implementation Strategy:**
+1. **Payment Method Selection:** Radio buttons on checkout page
+2. **Different Order Flows:**
+   - Stripe: Redirect to hosted checkout → webhook creates order
+   - Venmo: Create order first (need order number) → manual verification
+3. **Status Management:**
+   - Stripe: `payment_status: 'paid'` immediately (webhook)
+   - Venmo: `payment_status: 'pending_payment_verification'` → admin verifies
+4. **Cart Clearing:**
+   - Both: Server-side deletion
+   - Stripe: In webhook after payment success
+   - Venmo: Immediately after order creation
+
+**Database Design:**
+```sql
+orders (
+  payment_method VARCHAR(50),  -- 'stripe' or 'venmo'
+  payment_status VARCHAR(50),  -- 'paid', 'pending_payment_verification'
+  payment_intent_id VARCHAR(255)  -- Stripe payment intent (NULL for Venmo)
+)
+```
+
+**Admin UI Enhancement:**
+```typescript
+// Show payment method badge
+{order.payment_method === 'stripe' ? '💳 Stripe' : '📱 Venmo'}
+```
+
+---
+
+### Pattern 2: Stripe Checkout (Hosted Page)
+
+**Why:** Simplest, most secure Stripe integration (PCI-DSS compliant)
+
+**Flow:**
+1. User fills shipping info on your site
+2. Create Stripe Checkout session with line items
+3. Redirect to Stripe hosted page
+4. User completes payment on Stripe
+5. Webhook receives `checkout.session.completed` event
+6. Create order in database
+7. Send confirmation email
+8. Redirect user to success page
+
+**Key Files:**
+- `lib/stripe.ts` - Stripe client
+- `app/api/create-checkout-session/route.ts` - Session creation
+- `app/api/webhooks/stripe/route.ts` - Webhook handler
+- `app/checkout/success/page.tsx` - Success page
+
+**Webhook Pattern:**
+```typescript
+// Verify signature first
+const sig = headers.get('stripe-signature');
+const event = stripe.webhooks.constructEvent(body, sig, webhookSecret);
+
+// Handle specific event
+if (event.type === 'checkout.session.completed') {
+  const session = event.data.object;
+  // Create order here
+}
+```
+
+**Important:** Use `stripe listen --forward-to localhost:3002/api/webhooks/stripe` for local testing
+
+---
+
+### Pattern 3: Venmo QR Code Integration
+
+**Use Case:** Teen-friendly payment option (no credit card needed)
+
+**Flow:**
+1. User selects Venmo payment method
+2. Order created with `pending_payment_verification` status
+3. Generate Venmo deep link: `venmo://paycharge?txn=pay&recipients=USERNAME&amount=TOTAL&note=ORDER_NUMBER`
+4. Convert to QR code (qrcode package)
+5. Display QR code for scanning
+6. User scans → pays in Venmo app
+7. Admin manually verifies payment in Venmo
+8. Admin clicks "Verify Payment" in dashboard
+9. Order status updated to `paid`
+10. Confirmation email sent
+
+**Key Files:**
+- `lib/venmo.ts` - QR generation utilities
+- `app/api/checkout/venmo/route.ts` - Create Venmo orders
+- `app/checkout/venmo/page.tsx` - QR display
+- `app/admin/venmo/page.tsx` - Admin verification UI
+
+**QR Code Generation:**
+```typescript
+import QRCode from 'qrcode';
+
+const venmoLink = `venmo://paycharge?txn=pay&recipients=${username}&amount=${amount}&note=${orderNumber}`;
+const qrCode = await QRCode.toDataURL(venmoLink, {
+  width: 300,
+  color: { dark: '#008CFF' }  // Venmo blue
+});
+```
+
+---
+
+## 📧 Email Integration Pattern
+
+### Resend Setup (Simplest Option)
+
+**Why Resend:** Simple API, generous free tier (100/day), no credit card to start
+
+**Setup:**
+1. Sign up at resend.com
+2. Get API key
+3. Add to `.env`: `RESEND_API_KEY=re_...`
+4. `npm install resend`
+
+**Implementation:**
+```typescript
+// lib/resend.ts
+import { Resend } from 'resend';
+export const resend = new Resend(process.env.RESEND_API_KEY);
+
+// lib/emails/send-order-confirmation.ts
+export async function sendOrderConfirmation(params) {
+  const html = generateEmailHTML(params);  // Simple HTML string
+
+  await resend.emails.send({
+    from: 'onboarding@resend.dev',  // Dev domain
+    to: params.customerEmail,
+    subject: `Order Confirmation - ${params.orderNumber}`,
+    html: html,
+  });
+}
+```
+
+**Important Lessons:**
+1. **Use simple HTML strings** - React Email adds complexity, can cause validation errors
+2. **Make emails non-blocking** - Wrap in try/catch, don't fail order if email fails
+3. **Development domain** - Use `onboarding@resend.dev` until custom domain configured
+4. **Send after database commit** - Only send email after order successfully created
+
+**When to Send:**
+- Stripe: In webhook after order creation
+- Venmo: After admin verification (not at order creation)
 
 ---
 
