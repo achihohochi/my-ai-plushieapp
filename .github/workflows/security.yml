@@ -1,0 +1,132 @@
+name: Security Scan
+
+on:
+  push:
+    branches: [main, feature/*, develop]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Run weekly security scan every Monday at 9 AM UTC
+    - cron: '0 9 * * 1'
+
+jobs:
+  secret-scan:
+    name: Scan for Exposed Secrets
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Full history for comprehensive scan
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run secret scanner
+        run: node scripts/check-secrets.js
+
+      - name: Scan with GitLeaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_SUMMARY: true
+
+  dependency-audit:
+    name: Dependency Security Audit
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run npm audit
+        run: npm audit --audit-level=moderate
+        continue-on-error: true
+
+      - name: Run npm audit signatures
+        run: npm audit signatures
+
+  environment-check:
+    name: Environment Variable Check
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Check for .env files
+        run: |
+          if git ls-files | grep -E "^\.env$|^\.env\.(local|production|development)$"; then
+            echo "❌ ERROR: .env files found in repository!"
+            echo "These files should never be committed."
+            exit 1
+          fi
+          echo "✅ No .env files in repository"
+
+      - name: Verify .gitignore
+        run: |
+          if ! grep -q "^\.env\*$" .gitignore; then
+            echo "❌ ERROR: .gitignore does not properly exclude .env files"
+            exit 1
+          fi
+          echo "✅ .gitignore properly configured"
+
+  security-headers:
+    name: Verify Security Headers
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check security middleware exists
+        run: |
+          if [ ! -f "lib/security-middleware.ts" ]; then
+            echo "❌ ERROR: Security middleware not found"
+            exit 1
+          fi
+          echo "✅ Security middleware found"
+
+      - name: Verify security headers implementation
+        run: |
+          if ! grep -q "X-Frame-Options" lib/security-middleware.ts; then
+            echo "⚠️  WARNING: Security headers may not be properly implemented"
+          else
+            echo "✅ Security headers configured"
+          fi
+
+  license-check:
+    name: License Compliance Check
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install license checker
+        run: npm install -g license-checker
+
+      - name: Check licenses
+        run: license-checker --summary
+        continue-on-error: true

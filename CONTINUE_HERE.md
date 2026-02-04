@@ -268,10 +268,10 @@ NEXT_PUBLIC_BASE_URL
 ```
 
 **Current Credentials (Development):**
-- Admin Key: `change-this-to-a-secure-random-key`
+- Admin Key: See `.env` file (NEVER commit this file)
 - Venmo: @aichiho (business profile)
-- Stripe: Test mode keys
-- Resend: re_U7wwtHFK_8a9twxnwW1umRmLaSXqbN62g
+- Stripe: Test mode keys (stored in `.env`)
+- Resend: API key stored in `.env` (get from https://resend.com/api-keys)
 
 ### Production Checklist
 
