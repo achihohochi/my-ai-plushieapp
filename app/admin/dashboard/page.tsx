@@ -55,7 +55,9 @@ export default function AdminDashboardPage() {
       const productsData = await productsRes.json()
 
       // Fetch pending Venmo count
-      const venmoRes = await fetch('/api/admin/venmo/pending')
+      const venmoRes = await fetch('/api/admin/venmo/pending', {
+        headers: { 'x-admin-key': adminKey || '' },
+      })
       const venmoData = await venmoRes.json()
 
       if (ordersData.success) {

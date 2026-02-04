@@ -71,11 +71,15 @@ export async function POST(request: Request) {
         // Calculate totals
         const subtotal = (session.amount_total || 0) / 100; // Convert from cents
 
+        // Generate order number early for logging
+        const orderNumber = generateOrderNumber();
+
         // Get line items to create order items
         const lineItems = fullSession.line_items?.data || [];
         const orderItems = [];
+        const stockIssues: string[] = [];
 
-        // Process each line item and update inventory
+        // Validate all items before processing
         for (const item of lineItems) {
           const productName = typeof item.price?.product === 'object'
             ? item.price.product.name
@@ -87,14 +91,24 @@ export async function POST(request: Request) {
           });
 
           if (!product) {
-            console.error(`Product not found: ${productName}`);
+            const error = `CRITICAL: Product not found: ${productName} - Customer paid but product missing from database`;
+            console.error(error);
+            stockIssues.push(error);
+            // Still add to order items with null product_id to track the issue
+            orderItems.push({
+              product_id: 0, // Flag as missing product
+              quantity: item.quantity || 0,
+              price_at_time: (item.amount_total || 0) / 100 / (item.quantity || 1),
+            });
             continue;
           }
 
           // Check stock availability
           if (product.stock_quantity < (item.quantity || 0)) {
-            console.error(`Not enough stock for ${product.name}`);
-            continue;
+            const error = `CRITICAL: Insufficient stock for ${product.name} - Customer paid for ${item.quantity}, only ${product.stock_quantity} available`;
+            console.error(error);
+            stockIssues.push(error);
+            // Add to order but flag the issue
           }
 
           orderItems.push({
@@ -103,7 +117,7 @@ export async function POST(request: Request) {
             price_at_time: (item.amount_total || 0) / 100 / (item.quantity || 1),
           });
 
-          // Update product stock
+          // Update product stock (even if oversold - track negative inventory)
           await prisma.product.update({
             where: { id: product.id },
             data: {
@@ -114,10 +128,20 @@ export async function POST(request: Request) {
           });
         }
 
-        // Generate order number
-        const orderNumber = generateOrderNumber();
+        // If there are stock issues, log them critically
+        if (stockIssues.length > 0) {
+          console.error('🚨 STRIPE WEBHOOK STOCK ISSUES 🚨');
+          console.error(`Order: ${orderNumber}`);
+          console.error(`Payment: ${session.payment_intent}`);
+          console.error(`Customer: ${session.customer_email}`);
+          console.error('Issues:');
+          stockIssues.forEach((issue, idx) => {
+            console.error(`  ${idx + 1}. ${issue}`);
+          });
+          console.error('ACTION REQUIRED: Contact customer or arrange alternative fulfillment');
+        }
 
-        // Create order in database
+        // Create order in database (even if there are stock issues - customer has paid)
         const order = await prisma.order.create({
           data: {
             order_number: orderNumber,
@@ -135,9 +159,10 @@ export async function POST(request: Request) {
             payment_method: 'stripe',
             payment_status: 'paid',
             payment_intent_id: session.payment_intent as string,
-            order_status: 'processing',
+            // Flag order status if there are stock issues
+            order_status: stockIssues.length > 0 ? 'on_hold' : 'processing',
             order_items: {
-              create: orderItems,
+              create: orderItems.filter(item => item.product_id !== 0), // Exclude missing products
             },
           },
         });

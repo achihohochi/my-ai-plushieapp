@@ -77,16 +77,16 @@ export default function VenmoSuccessPage() {
               <p className="text-2xl font-bold text-gray-900">{orderData.orderNumber}</p>
             </div>
 
-            {/* Email Confirmation */}
+            {/* Email Notification Info */}
             <div className="flex items-start gap-3 mb-6 p-4 bg-gray-50 rounded-lg">
               <Mail className="w-5 h-5 text-gray-600 flex-shrink-0 mt-0.5" />
               <div>
                 <p className="text-sm text-gray-900">
-                  <strong>Confirmation email sent to:</strong>
+                  <strong>Email notifications will be sent to:</strong>
                 </p>
                 <p className="text-sm text-gray-600">{orderData.customerEmail}</p>
                 <p className="text-xs text-gray-500 mt-1">
-                  You'll receive another email once payment is verified
+                  You'll receive a confirmation email once we verify your payment
                 </p>
               </div>
             </div>

@@ -104,6 +104,29 @@ export async function POST(request: Request) {
       },
     });
 
+    // Reserve inventory by decrementing stock for Venmo orders
+    // This prevents overselling while payment is being verified
+    for (const item of items) {
+      await prisma.product.update({
+        where: { id: parseInt(item.id) },
+        data: {
+          stock_quantity: {
+            decrement: item.quantity,
+          },
+        },
+      });
+
+      // Log inventory change with pending status
+      await prisma.inventoryLog.create({
+        data: {
+          product_id: parseInt(item.id),
+          change_quantity: -item.quantity,
+          reason: 'sale',
+          notes: `Order ${orderNumber} (Venmo - Pending Payment)`,
+        },
+      });
+    }
+
     // Generate Venmo QR code
     const qrCodeDataUrl = await generateVenmoQRCode({
       username: venmoUsername,
