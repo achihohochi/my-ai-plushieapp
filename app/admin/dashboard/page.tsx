@@ -69,7 +69,7 @@ export default function AdminDashboardPage() {
           totalOrders: ordersData.count,
           totalProducts: productsData.count,
           totalRevenue: revenue,
-          pendingVenmo: venmoData.success ? venmoData.orders.length : 0,
+          pendingVenmo: venmoData.data?.length ?? 0,
         })
       }
     } catch (error) {

@@ -316,6 +316,273 @@ try {
 
 ---
 
+## 🧪 Comprehensive Testing Strategy
+
+### Testing Philosophy: Test Integrity Over Coverage
+
+**Core Principle:** Tests must validate REAL user flows, not just achieve green lights.
+
+### 3-Layer Testing Architecture
+
+**1. Unit Tests (Fast - < 500ms)**
+- Business logic utilities
+- Pure functions (formatCurrency, generateOrderNumber)
+- React components in isolation
+- **Target:** 80%+ coverage on utilities
+- **Run:** On every file save (watch mode)
+
+**2. Integration Tests (Medium - 1-5s)**
+- API endpoints with real database
+- Session management and cookies
+- Payment flow validation
+- **Target:** 100% of critical API routes
+- **Run:** Before every commit
+
+**3. E2E Tests (Slow - 60-120s)**
+- Complete user journeys
+- Browser automation (Playwright)
+- Cross-browser compatibility
+- **Target:** All critical conversion paths
+- **Run:** Before deployment
+
+### Critical E-Commerce Test Patterns
+
+#### Pattern 1: Concurrent Purchase Testing
+```typescript
+// CRITICAL: Test race conditions for limited stock
+it('should prevent overselling when 2 users buy last item simultaneously', async () => {
+  // Set product stock to 1
+  await setStock(productId, 1);
+
+  // Fire 2 simultaneous purchase requests
+  const [response1, response2] = await Promise.all([
+    createOrder({ productId, quantity: 1 }),
+    createOrder({ productId, quantity: 1 }),
+  ]);
+
+  // Verify: Only 1 succeeds, other gets "out of stock"
+  const successCount = [response1, response2].filter(r => r.status === 200).length;
+  expect(successCount).toBe(1);
+
+  // Verify: Stock is 0, never negative
+  const product = await getProduct(productId);
+  expect(product.stock_quantity).toBe(0);
+  expect(product.stock_quantity).toBeGreaterThanOrEqual(0);
+});
+```
+
+**Why Critical:** Prevents overselling under traffic load, protects revenue.
+
+#### Pattern 2: Idempotency Testing
+```typescript
+// CRITICAL: Prevent duplicate orders from double-click
+it('should prevent duplicate orders from rapid double-click', async () => {
+  const orderPayload = { email: 'test@example.com', items: [...] };
+
+  // Simulate user double-clicking "Place Order"
+  const [response1, response2] = await Promise.all([
+    createOrder(orderPayload),
+    createOrder(orderPayload),
+  ]);
+
+  // Verify: Both return success (idempotent)
+  expect(response1.status).toBe(200);
+  expect(response2.status).toBe(200);
+
+  // Verify: Same order number returned (not 2 separate orders)
+  const data1 = await response1.json();
+  const data2 = await response2.json();
+  expect(data1.orderNumber).toBe(data2.orderNumber);
+});
+```
+
+**Implementation:** Add idempotency_key column to orders table.
+
+#### Pattern 3: Transaction Rollback Testing
+```typescript
+// CRITICAL: Verify atomic operations (all-or-nothing)
+it('should rollback order if inventory update fails', async () => {
+  const initialStock = await getStock(productId);
+
+  // Simulate order creation with inventory update failure
+  const response = await createOrder({
+    items: [{ id: productId, quantity: 1 }],
+  });
+
+  if (response.status === 500) {
+    // Verify: Stock unchanged (transaction rolled back)
+    const finalStock = await getStock(productId);
+    expect(finalStock).toBe(initialStock);
+
+    // Verify: No partial order created
+    const orders = await getRecentOrders();
+    expect(orders.length).toBe(0);
+  }
+});
+```
+
+**Implementation:** Wrap order creation in Prisma $transaction.
+
+#### Pattern 4: Webhook Deduplication Testing
+```typescript
+// CRITICAL: Prevent duplicate orders from Stripe webhook retries
+it('should handle duplicate webhook events', async () => {
+  const paymentIntentId = 'pi_test_123';
+
+  // Send same webhook event twice
+  await sendWebhook({ payment_intent: paymentIntentId });
+  await sendWebhook({ payment_intent: paymentIntentId });
+
+  // Verify: Only 1 order created
+  const orders = await prisma.order.findMany({
+    where: { payment_intent_id: paymentIntentId },
+  });
+
+  expect(orders.length).toBe(1);
+});
+```
+
+**Implementation:** Check payment_intent_id before creating order.
+
+### Test Integrity Checklist
+
+Before considering tests "production-ready," verify:
+
+- [ ] Tests hit REAL database (not mocked)
+- [ ] Tests create actual records (verify with DB query)
+- [ ] Tests validate data persistence across requests
+- [ ] Tests check error paths, not just happy paths
+- [ ] Tests verify business rules (stock limits, pricing)
+- [ ] Tests catch race conditions (concurrent requests)
+- [ ] Tests validate transaction safety (rollbacks)
+- [ ] Tests ensure idempotency (duplicate prevention)
+
+### Testing Anti-Patterns to Avoid
+
+**❌ DON'T: Mock Everything**
+```typescript
+// BAD: This doesn't test actual database behavior
+vi.mock('@/lib/prisma', () => ({
+  product: { findUnique: vi.fn().mockResolvedValue({ id: 1 }) },
+}));
+```
+
+**✅ DO: Use Real Database for Integration Tests**
+```typescript
+// GOOD: Tests actual Prisma queries and constraints
+const product = await prisma.product.findUnique({ where: { id: 1 } });
+expect(product).not.toBeNull();
+```
+
+**❌ DON'T: Test Only Happy Paths**
+```typescript
+// BAD: Only tests when everything works
+it('should create order', async () => {
+  const order = await createOrder(validPayload);
+  expect(order.success).toBe(true);
+});
+```
+
+**✅ DO: Test Error Scenarios**
+```typescript
+// GOOD: Tests validation, stock limits, errors
+it('should reject order with insufficient stock', async () => {
+  const response = await createOrder({ quantity: 9999 });
+  expect(response.status).toBe(400);
+  expect(response.error).toContain('stock');
+});
+```
+
+### Test Execution Workflow
+
+**Development:**
+```bash
+npm run test:unit:watch    # Watch mode for TDD
+npm run test:integration   # After implementing feature
+```
+
+**Pre-Commit:**
+```bash
+npm run test:unit          # Fast check (< 1s)
+npm run test:integration   # Full validation (< 5s)
+```
+
+**Pre-Deployment:**
+```bash
+npm run test:coverage      # Generate coverage report
+npm run test:e2e           # Full user flow validation
+```
+
+**CI/CD Pipeline:**
+```yaml
+# GitHub Actions
+- run: npm run test:unit
+- run: npm run test:integration
+- run: npm run test:e2e
+- run: npm run test:coverage
+- name: Upload coverage to Codecov
+  uses: codecov/codecov-action@v3
+```
+
+### Database Testing Best Practices
+
+**1. Use Test Database for Integration Tests:**
+```typescript
+// vitest.setup.ts
+process.env.DATABASE_URL = 'postgresql://user@localhost:5432/app_test';
+```
+
+**2. Clean Up Test Data:**
+```typescript
+afterEach(async () => {
+  // Delete test orders from last run
+  await prisma.order.deleteMany({
+    where: {
+      customer_email: { contains: '@test.com' },
+      created_at: { gte: new Date(Date.now() - 60000) },
+    },
+  });
+});
+```
+
+**3. Verify Database State:**
+```typescript
+it('should decrement inventory on purchase', async () => {
+  const initialStock = await getStock(productId);
+
+  await createOrder({ productId, quantity: 2 });
+
+  const finalStock = await getStock(productId);
+  expect(finalStock).toBe(initialStock - 2);
+});
+```
+
+### Test Documentation Standards
+
+**Test Name Format:**
+```typescript
+// Format: should [action] [condition]
+it('should reject quantity exceeding stock', async () => { ... });
+it('should create session cookie on first cart add', async () => { ... });
+it('should increment quantity for duplicate cart adds', async () => { ... });
+```
+
+**Test Structure (AAA Pattern):**
+```typescript
+it('should update cart item quantity', async () => {
+  // Arrange: Set up test data
+  const { cartItemId, sessionCookie } = await addItemToCart();
+
+  // Act: Perform operation
+  const response = await updateCartQuantity(cartItemId, 5, sessionCookie);
+
+  // Assert: Verify outcome
+  expect(response.data.quantity).toBe(5);
+});
+```
+
+---
+
 ## 🧠 Context Management
 
 ### Staying Under Token Limits

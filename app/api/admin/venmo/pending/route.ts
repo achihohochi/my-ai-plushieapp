@@ -44,7 +44,7 @@ export async function GET(request: Request) {
 
     return NextResponse.json({
       success: true,
-      orders,
+      data: orders,
     });
   } catch (error) {
     console.error('Error fetching pending Venmo orders:', error);

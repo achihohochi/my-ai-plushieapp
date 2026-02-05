@@ -73,6 +73,16 @@ export async function POST(request: Request) {
       );
     }
 
+    if (quantity < 1) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Quantity must be at least 1',
+        },
+        { status: 400 }
+      );
+    }
+
     // Check if product exists and is in stock
     const product = await prisma.product.findUnique({
       where: { id: productId },

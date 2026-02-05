@@ -48,7 +48,7 @@ export default function AdminVenmoPage() {
       const data = await res.json();
 
       if (data.success) {
-        setOrders(data.orders);
+        setOrders(data.data || []);
       } else {
         setError(data.error || 'Failed to fetch orders');
       }

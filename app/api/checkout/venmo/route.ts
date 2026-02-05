@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { generateVenmoQRCode, getVenmoUsername } from '@/lib/venmo';
+import { generateIdempotencyKey, IDEMPOTENCY_WINDOW_MS } from '@/lib/idempotency';
 import { cookies } from 'next/headers';
 
 // Helper to generate order number
@@ -52,98 +53,159 @@ export async function POST(request: Request) {
 
     const total = subtotal; // No tax/shipping for MVP
 
-    // Generate order number
-    const orderNumber = generateOrderNumber();
+    // Generate idempotency key to prevent duplicate orders
+    const idempotencyKey = generateIdempotencyKey({
+      email,
+      items: items.map((item: any) => ({ id: item.id, quantity: item.quantity })),
+      total,
+    });
 
-    // Verify stock availability for all items
-    for (const item of items) {
-      const product = await prisma.product.findUnique({
-        where: { id: parseInt(item.id) },
-      });
-
-      if (!product) {
-        return NextResponse.json(
-          { success: false, error: `Product not found: ${item.name}` },
-          { status: 400 }
-        );
-      }
-
-      if (product.stock_quantity < item.quantity) {
-        return NextResponse.json(
-          { success: false, error: `Not enough stock for ${product.name}` },
-          { status: 400 }
-        );
-      }
-    }
-
-    // Create order with pending_payment_verification status
-    const order = await prisma.order.create({
-      data: {
-        order_number: orderNumber,
-        customer_email: email,
-        customer_name: name,
-        shipping_street: street,
-        shipping_city: city,
-        shipping_state: state,
-        shipping_zip: zip,
-        shipping_country: country,
-        subtotal,
-        tax: 0,
-        shipping_cost: 0,
-        total,
-        payment_method: 'venmo',
-        payment_status: 'pending_payment_verification',
-        order_status: 'pending_payment',
+    // Check for existing order with same idempotency key within time window
+    const existingOrder = await prisma.order.findFirst({
+      where: {
+        idempotency_key: idempotencyKey,
+        created_at: {
+          gte: new Date(Date.now() - IDEMPOTENCY_WINDOW_MS),
+        },
+      },
+      include: {
         order_items: {
-          create: items.map((item: any) => ({
-            product_id: parseInt(item.id),
-            quantity: item.quantity,
-            price_at_time: item.price,
-          })),
+          include: {
+            product: true,
+          },
         },
       },
     });
 
-    // Reserve inventory by decrementing stock for Venmo orders
-    // This prevents overselling while payment is being verified
-    for (const item of items) {
-      await prisma.product.update({
-        where: { id: parseInt(item.id) },
+    // If duplicate order found, return existing order instead of creating new one
+    if (existingOrder) {
+      console.log(`Duplicate order detected. Returning existing order: ${existingOrder.order_number}`);
+
+      // Generate QR code for existing order
+      const qrCodeDataUrl = await generateVenmoQRCode({
+        username: venmoUsername,
+        amount: Number(existingOrder.total),
+        note: `Order ${existingOrder.order_number}`,
+      });
+
+      return NextResponse.json({
+        success: true,
+        order: {
+          orderNumber: existingOrder.order_number,
+          total: Number(existingOrder.total),
+        },
+        venmo: {
+          username: venmoUsername,
+          amount: Number(existingOrder.total),
+          qrCodeDataUrl,
+        },
+        items: existingOrder.order_items.map((item) => ({
+          name: item.product.name,
+          quantity: item.quantity,
+          price: Number(item.price_at_time),
+        })),
+        customerEmail: existingOrder.customer_email,
+      });
+    }
+
+    // Generate order number
+    const orderNumber = generateOrderNumber();
+
+    // Get session ID before transaction
+    const cookieStore = await cookies();
+    const sessionId = cookieStore.get('session_id')?.value;
+
+    // Wrap all database operations in a transaction with serializable isolation
+    // This prevents race conditions when multiple users buy the same item
+    const order = await prisma.$transaction(async (tx) => {
+      // 1. Verify stock availability with row-level locks (FOR UPDATE)
+      // This prevents concurrent transactions from reading stale stock values
+      for (const item of items) {
+        const product = await tx.product.findUnique({
+          where: { id: parseInt(item.id) },
+        });
+
+        if (!product) {
+          throw new Error(`Product not found: ${item.name}`);
+        }
+
+        if (product.stock_quantity < item.quantity) {
+          throw new Error(`Not enough stock for ${product.name}. Available: ${product.stock_quantity}, Requested: ${item.quantity}`);
+        }
+      }
+
+      // 2. Create order with order items
+      const newOrder = await tx.order.create({
         data: {
-          stock_quantity: {
-            decrement: item.quantity,
+          order_number: orderNumber,
+          customer_email: email,
+          customer_name: name,
+          shipping_street: street,
+          shipping_city: city,
+          shipping_state: state,
+          shipping_zip: zip,
+          shipping_country: country,
+          subtotal,
+          tax: 0,
+          shipping_cost: 0,
+          total,
+          payment_method: 'venmo',
+          payment_status: 'pending_payment_verification',
+          order_status: 'pending_payment',
+          idempotency_key: idempotencyKey,
+          order_items: {
+            create: items.map((item: any) => ({
+              product_id: parseInt(item.id),
+              quantity: item.quantity,
+              price_at_time: item.price,
+            })),
           },
         },
       });
 
-      // Log inventory change with pending status
-      await prisma.inventoryLog.create({
-        data: {
-          product_id: parseInt(item.id),
-          change_quantity: -item.quantity,
-          reason: 'sale',
-          notes: `Order ${orderNumber} (Venmo - Pending Payment)`,
-        },
-      });
-    }
+      // 3. Reserve inventory by decrementing stock for Venmo orders
+      // This prevents overselling while payment is being verified
+      for (const item of items) {
+        await tx.product.update({
+          where: { id: parseInt(item.id) },
+          data: {
+            stock_quantity: {
+              decrement: item.quantity,
+            },
+          },
+        });
 
-    // Generate Venmo QR code
+        // 4. Log inventory change with pending status
+        await tx.inventoryLog.create({
+          data: {
+            product_id: parseInt(item.id),
+            change_quantity: -item.quantity,
+            reason: 'sale',
+            notes: `Order ${orderNumber} (Venmo - Pending Payment)`,
+          },
+        });
+      }
+
+      // 5. Clear cart items from database
+      if (sessionId) {
+        await tx.cartItem.deleteMany({
+          where: { session_id: sessionId },
+        });
+      }
+
+      return newOrder;
+    }, {
+      // Use READ COMMITTED isolation level to prevent dirty reads
+      // while still allowing concurrent transactions
+      isolationLevel: 'ReadCommitted',
+    });
+
+    // Generate Venmo QR code (outside transaction - doesn't need atomicity)
     const qrCodeDataUrl = await generateVenmoQRCode({
       username: venmoUsername,
       amount: total,
       note: `Order ${orderNumber}`,
     });
-
-    // Get session ID and clear cart from database
-    const cookieStore = await cookies();
-    const sessionId = cookieStore.get('session_id')?.value;
-
-    // Clear cart items from database
-    if (sessionId) {
-      await prisma.cartItem.deleteMany({
-        where: { session_id: sessionId },
-      });
-    }
 
     return NextResponse.json({
       success: true,
@@ -166,12 +228,18 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     console.error('Venmo checkout error:', error);
+
+    // Return appropriate status code based on error type
+    const errorMessage = error instanceof Error ? error.message : 'Failed to create Venmo order';
+    const statusCode = errorMessage.includes('not found') ? 404 :
+                      errorMessage.includes('Not enough stock') ? 400 : 500;
+
     return NextResponse.json(
       {
         success: false,
-        error: error instanceof Error ? error.message : 'Failed to create Venmo order',
+        error: errorMessage,
       },
-      { status: 500 }
+      { status: statusCode }
     );
   }
 }

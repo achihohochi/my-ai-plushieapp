@@ -76,8 +76,9 @@ export async function POST(request: Request) {
 
         // Get line items to create order items
         const lineItems = fullSession.line_items?.data || [];
-        const orderItems = [];
+        const orderItems: { product_id: number; quantity: number; price_at_time: number }[] = [];
         const stockIssues: string[] = [];
+        const productUpdates: { id: number; quantity: number }[] = [];
 
         // Validate all items before processing
         for (const item of lineItems) {
@@ -117,14 +118,9 @@ export async function POST(request: Request) {
             price_at_time: (item.amount_total || 0) / 100 / (item.quantity || 1),
           });
 
-          // Update product stock (even if oversold - track negative inventory)
-          await prisma.product.update({
-            where: { id: product.id },
-            data: {
-              stock_quantity: {
-                decrement: item.quantity || 0,
-              },
-            },
+          productUpdates.push({
+            id: product.id,
+            quantity: item.quantity || 0,
           });
         }
 
@@ -141,50 +137,69 @@ export async function POST(request: Request) {
           console.error('ACTION REQUIRED: Contact customer or arrange alternative fulfillment');
         }
 
-        // Create order in database (even if there are stock issues - customer has paid)
-        const order = await prisma.order.create({
-          data: {
-            order_number: orderNumber,
-            customer_email: session.customer_email || session.customer_details?.email || '',
-            customer_name: customer_name || session.customer_details?.name || '',
-            shipping_street: shipping_street || '',
-            shipping_city: shipping_city || '',
-            shipping_state: shipping_state || '',
-            shipping_zip: shipping_zip || '',
-            shipping_country: shipping_country,
-            subtotal,
-            tax: 0,
-            shipping_cost: 0,
-            total: subtotal,
-            payment_method: 'stripe',
-            payment_status: 'paid',
-            payment_intent_id: session.payment_intent as string,
-            // Flag order status if there are stock issues
-            order_status: stockIssues.length > 0 ? 'on_hold' : 'processing',
-            order_items: {
-              create: orderItems.filter(item => item.product_id !== 0), // Exclude missing products
-            },
-          },
-        });
-
-        // Log inventory changes
-        for (const item of orderItems) {
-          await prisma.inventoryLog.create({
+        // Wrap all database operations in a transaction for atomicity
+        const order = await prisma.$transaction(async (tx) => {
+          // 1. Create order with order items
+          const newOrder = await tx.order.create({
             data: {
-              product_id: item.product_id,
-              change_quantity: -item.quantity,
-              reason: 'sale',
-              notes: `Order ${orderNumber} (Stripe)`,
+              order_number: orderNumber,
+              customer_email: session.customer_email || session.customer_details?.email || '',
+              customer_name: customer_name || session.customer_details?.name || '',
+              shipping_street: shipping_street || '',
+              shipping_city: shipping_city || '',
+              shipping_state: shipping_state || '',
+              shipping_zip: shipping_zip || '',
+              shipping_country: shipping_country,
+              subtotal,
+              tax: 0,
+              shipping_cost: 0,
+              total: subtotal,
+              payment_method: 'stripe',
+              payment_status: 'paid',
+              payment_intent_id: session.payment_intent as string,
+              // Flag order status if there are stock issues
+              order_status: stockIssues.length > 0 ? 'on_hold' : 'processing',
+              order_items: {
+                create: orderItems.filter(item => item.product_id !== 0), // Exclude missing products
+              },
             },
           });
-        }
 
-        // Clear cart if session ID exists
-        if (cartSessionId) {
-          await prisma.cartItem.deleteMany({
-            where: { session_id: cartSessionId },
-          });
-        }
+          // 2. Update product stock
+          for (const update of productUpdates) {
+            await tx.product.update({
+              where: { id: update.id },
+              data: {
+                stock_quantity: {
+                  decrement: update.quantity,
+                },
+              },
+            });
+          }
+
+          // 3. Log inventory changes
+          for (const item of orderItems) {
+            if (item.product_id !== 0) {
+              await tx.inventoryLog.create({
+                data: {
+                  product_id: item.product_id,
+                  change_quantity: -item.quantity,
+                  reason: 'sale',
+                  notes: `Order ${orderNumber} (Stripe)`,
+                },
+              });
+            }
+          }
+
+          // 4. Clear cart if session ID exists
+          if (cartSessionId) {
+            await tx.cartItem.deleteMany({
+              where: { session_id: cartSessionId },
+            });
+          }
+
+          return newOrder;
+        });
 
         console.log(`Order created: ${orderNumber} for payment ${session.payment_intent}`);
 

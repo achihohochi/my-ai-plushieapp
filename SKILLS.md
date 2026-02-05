@@ -2243,13 +2243,402 @@ ADMIN_KEY="your-secure-random-key-here"
 
 ---
 
+## 🧪 E-Commerce Testing Patterns
+
+### 3-Layer Testing Architecture
+
+**Layer 1: Unit Tests**
+- Business logic utilities
+- Pure functions (formatCurrency, orderNumber generation)
+- React components in isolation
+- Target: < 500ms execution
+
+**Layer 2: Integration Tests**
+- API endpoints with real database
+- Session management, authentication
+- Payment flow validation
+- Target: 100% critical API coverage
+
+**Layer 3: E2E Tests**
+- Complete user journeys (Playwright)
+- Browser automation
+- Cross-browser testing
+- Target: All conversion paths
+
+### Critical Test Patterns for E-Commerce
+
+#### 1. Concurrent Purchase Test (Prevents Overselling)
+
+```typescript
+// __tests__/integration/api/checkout-concurrency.test.ts
+import { describe, it, expect } from 'vitest';
+import { prisma } from '@/lib/prisma';
+
+describe('Concurrent Purchase Handling', () => {
+  it('should prevent overselling when 2 users buy last item simultaneously', async () => {
+    // Arrange: Set product stock to 1
+    await prisma.product.update({
+      where: { id: testProductId },
+      data: { stock_quantity: 1 },
+    });
+
+    // Act: Fire 2 simultaneous purchase requests
+    const [response1, response2] = await Promise.all([
+      fetch(`${baseUrl}/api/checkout/venmo`, {
+        method: 'POST',
+        body: JSON.stringify({
+          email: 'user1@test.com',
+          items: [{ id: testProductId, quantity: 1 }],
+        }),
+      }),
+      fetch(`${baseUrl}/api/checkout/venmo`, {
+        method: 'POST',
+        body: JSON.stringify({
+          email: 'user2@test.com',
+          items: [{ id: testProductId, quantity: 1 }],
+        }),
+      }),
+    ]);
+
+    // Assert: Only 1 succeeds
+    const successCount = [response1, response2]
+      .filter(r => r.status === 200).length;
+    expect(successCount).toBe(1);
+
+    // Assert: Stock is 0, never negative
+    const product = await prisma.product.findUnique({
+      where: { id: testProductId },
+    });
+    expect(product?.stock_quantity).toBe(0);
+    expect(product?.stock_quantity).toBeGreaterThanOrEqual(0);
+  });
+});
+```
+
+**Why Critical:** Prevents overselling under traffic, protects revenue.
+
+**Implementation:** Use database-level locking or optimistic concurrency control.
+
+#### 2. Idempotency Test (Prevents Duplicate Orders)
+
+```typescript
+// __tests__/integration/api/checkout-idempotency.test.ts
+describe('Checkout Idempotency', () => {
+  it('should prevent duplicate orders from rapid double-click', async () => {
+    const orderPayload = {
+      email: 'test@example.com',
+      items: [{ id: 1, quantity: 1 }],
+    };
+
+    // Act: Simulate user double-clicking "Place Order"
+    const [response1, response2] = await Promise.all([
+      createOrder(orderPayload),
+      createOrder(orderPayload),
+    ]);
+
+    const data1 = await response1.json();
+    const data2 = await response2.json();
+
+    // Assert: Both return same order number (idempotent)
+    expect(data1.orderNumber).toBe(data2.orderNumber);
+
+    // Verify only 1 order in database
+    const orders = await prisma.order.findMany({
+      where: { customer_email: 'test@example.com' },
+    });
+    expect(orders.length).toBe(1);
+  });
+});
+```
+
+**Implementation:**
+```typescript
+// Add idempotency key to database
+model Order {
+  idempotency_key String? @unique
+  // ... other fields
+}
+
+// In checkout API:
+const idempotencyKey = `${sessionId}-${cartHash}-${Date.now()}`;
+const existingOrder = await prisma.order.findUnique({
+  where: { idempotency_key: idempotencyKey }
+});
+
+if (existingOrder) {
+  return NextResponse.json({
+    success: true,
+    order: existingOrder, // Return existing order
+  });
+}
+```
+
+#### 3. Transaction Rollback Test (Ensures Data Integrity)
+
+```typescript
+// __tests__/integration/api/transaction-safety.test.ts
+describe('Transaction Safety', () => {
+  it('should rollback order if inventory update fails', async () => {
+    const initialStock = await getStock(productId);
+
+    // Attempt order with invalid product to trigger failure
+    const response = await createOrder({
+      items: [
+        { id: validProductId, quantity: 1 },
+        { id: 99999, quantity: 1 }, // Invalid product
+      ],
+    });
+
+    expect(response.status).toBe(400);
+
+    // Verify: Stock unchanged (transaction rolled back)
+    const finalStock = await getStock(validProductId);
+    expect(finalStock).toBe(initialStock);
+
+    // Verify: No partial order created
+    const orders = await prisma.order.findMany({
+      where: { customer_email: 'test@example.com' },
+    });
+    expect(orders.length).toBe(0);
+  });
+});
+```
+
+**Implementation:**
+```typescript
+// Wrap order creation in Prisma transaction
+await prisma.$transaction(async (tx) => {
+  const order = await tx.order.create({ data: { ... } });
+
+  for (const item of items) {
+    // Verify product exists
+    const product = await tx.product.findUnique({ where: { id: item.id } });
+    if (!product) throw new Error('Product not found');
+
+    // Create order item
+    await tx.orderItem.create({ data: { ... } });
+
+    // Update inventory
+    await tx.product.update({
+      where: { id: item.id },
+      data: { stock_quantity: { decrement: item.quantity } },
+    });
+
+    // Log inventory change
+    await tx.inventoryLog.create({ data: { ... } });
+  }
+
+  // Clear cart
+  await tx.cartItem.deleteMany({ where: { session_id: sessionId } });
+
+  // If ANY operation fails, ALL operations roll back
+});
+```
+
+#### 4. Webhook Deduplication Test (Prevents Double Charges)
+
+```typescript
+// __tests__/integration/webhooks/stripe-webhook-duplicates.test.ts
+describe('Webhook Deduplication', () => {
+  it('should handle duplicate Stripe webhook events', async () => {
+    const paymentIntentId = 'pi_test_123';
+
+    // Send same webhook event twice (Stripe retries)
+    await sendWebhook({
+      type: 'checkout.session.completed',
+      data: { object: { payment_intent: paymentIntentId } },
+    });
+
+    await sendWebhook({
+      type: 'checkout.session.completed',
+      data: { object: { payment_intent: paymentIntentId } },
+    });
+
+    // Verify: Only 1 order created
+    const orders = await prisma.order.findMany({
+      where: { payment_intent_id: paymentIntentId },
+    });
+
+    expect(orders.length).toBe(1);
+  });
+});
+```
+
+**Implementation:**
+```typescript
+// In Stripe webhook handler:
+export async function POST(request: Request) {
+  const event = stripe.webhooks.constructEvent(...);
+
+  if (event.type === 'checkout.session.completed') {
+    const session = event.data.object;
+    const paymentIntentId = session.payment_intent;
+
+    // Check if order already exists
+    const existingOrder = await prisma.order.findUnique({
+      where: { payment_intent_id: paymentIntentId },
+    });
+
+    if (existingOrder) {
+      console.log('Duplicate webhook, order already created');
+      return NextResponse.json({ received: true });
+    }
+
+    // Create order only if doesn't exist
+    await prisma.order.create({
+      data: {
+        payment_intent_id: paymentIntentId,
+        // ... other fields
+      },
+    });
+  }
+
+  return NextResponse.json({ received: true });
+}
+```
+
+### Test Setup Patterns
+
+#### Vitest Configuration
+
+```typescript
+// vitest.config.ts
+import { defineConfig } from 'vitest/config';
+import path from 'path';
+
+export default defineConfig({
+  test: {
+    globals: true,
+    environment: 'jsdom',
+    setupFiles: ['./vitest.setup.ts'],
+    include: [
+      '__tests__/unit/**/*.test.{ts,tsx}',
+      '__tests__/integration/**/*.test.{ts,tsx}',
+    ],
+  },
+  resolve: {
+    alias: { '@': path.resolve(__dirname, './') },
+  },
+});
+```
+
+#### Vitest Setup with Environment Variables
+
+```typescript
+// vitest.setup.ts
+import { config } from 'dotenv';
+import path from 'path';
+
+// Load .env file for integration tests
+config({ path: path.resolve(__dirname, '.env') });
+
+// Set defaults for unit tests
+if (!process.env.DATABASE_URL) {
+  process.env.DATABASE_URL = 'postgresql://user@localhost:5432/app_test';
+}
+```
+
+#### Playwright Configuration
+
+```typescript
+// playwright.config.ts
+import { defineConfig } from '@playwright/test';
+
+export default defineConfig({
+  testDir: './__tests__/e2e',
+  use: {
+    baseURL: 'http://localhost:3002',
+    trace: 'on-first-retry',
+    screenshot: 'only-on-failure',
+  },
+  projects: [
+    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+  ],
+  webServer: {
+    command: 'npm run dev',
+    url: 'http://localhost:3002',
+    reuseExistingServer: true,
+  },
+});
+```
+
+### Test Execution Scripts
+
+```json
+// package.json
+{
+  "scripts": {
+    "test": "vitest",
+    "test:unit": "vitest run __tests__/unit",
+    "test:integration": "vitest run __tests__/integration",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:coverage": "vitest --coverage",
+    "test:watch": "vitest --watch"
+  }
+}
+```
+
+### Test Integrity Checklist
+
+Before considering tests "production-ready":
+
+- [ ] Tests hit real database (not mocked)
+- [ ] Tests create actual database records
+- [ ] Tests validate data persistence across requests
+- [ ] Tests check error paths, not just happy paths
+- [ ] Tests verify business rules (stock, pricing)
+- [ ] Tests catch race conditions (concurrent requests)
+- [ ] Tests validate transaction safety (rollbacks)
+- [ ] Tests ensure idempotency (duplicate prevention)
+- [ ] Tests verify webhook deduplication
+- [ ] Tests check inventory consistency
+
+### Database Testing Best Practices
+
+**Clean Up Test Data:**
+```typescript
+afterEach(async () => {
+  // Delete test orders
+  await prisma.order.deleteMany({
+    where: {
+      customer_email: { contains: '@test.com' },
+      created_at: { gte: new Date(Date.now() - 60000) },
+    },
+  });
+});
+```
+
+**Verify Database State:**
+```typescript
+it('should decrement inventory on purchase', async () => {
+  const initialStock = await prisma.product.findUnique({
+    where: { id: productId },
+  });
+
+  await createOrder({ productId, quantity: 2 });
+
+  const finalStock = await prisma.product.findUnique({
+    where: { id: productId },
+  });
+
+  expect(finalStock?.stock_quantity).toBe(
+    initialStock!.stock_quantity - 2
+  );
+});
+```
+
+---
+
 ## 📚 Related Files
 
 - `CLAUDE.md` - AI development best practices
 - `docs/architecture/TRD.md` - Technical requirements
 - `docs/DECISIONS.md` - Architectural decisions
 - `prisma/schema.prisma` - Full database schema
+- `__tests__/TEST_INTEGRITY_AUDIT.md` - Testing quality analysis
+- `__tests__/TESTING_DEBRIEF.md` - Comprehensive testing report
 
 ---
 
-**Remember:** These patterns are reusable across any e-commerce application. Adapt database schema, API routes, and business logic to fit your specific product domain.
+**Remember:** These patterns are reusable across any e-commerce application. Adapt database schema, API routes, business logic, and **especially testing patterns** to fit your specific product domain.

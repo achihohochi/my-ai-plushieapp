@@ -7,6 +7,7 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 // ============================================
@@ -103,6 +104,7 @@ model Order {
   payment_method      String      // stripe, venmo
   payment_status      String      @default("pending") // pending, paid, failed, refunded
   payment_intent_id   String?     // Stripe payment intent ID
+  idempotency_key     String?     @db.VarChar(32) // For preventing duplicate orders
 
   // Order Status
   order_status        String      @default("processing") // processing, shipped, delivered, cancelled
